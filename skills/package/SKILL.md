@@ -51,7 +51,8 @@ git show <TAG>:chrome-extension/manifest.json
 - `package-lock.json`：確認 `name` 與 `version` 是否和 `package.json` 一致；不要任意重建 lockfile。
 - Chrome Extension 版本：以 `chrome-extension/manifest.json.version` 為準。
 - Git tag 不一定等於 VSIX 版本。
-- 四段 Git tag 不可直接當成 VSIX 版本；VSIX 版本須符合 VS Code / VSIX 的版本格式。
+- 四段版本不可直接當成 VSIX 版本；VSIX 版本須符合 VS Code / VSIX 的版本格式。`tools/package-extension.js` 會自動把 `0.1.18.1` 轉成 `0.1.18-1` 當 VSIX 內部版本，產物檔名仍用四段的正式版本 —— 因此**只需要改 `package.json.version`**，不要手動改腳本。
+- 版本序的來源：三段跟上游 `daimou1028/hadome` 對齊，第四段是我方序號（例：上游 v0.1.18 → 我方 `0.1.18.1`、`0.1.18.2`）。Git tag 沿用無 `v` 前綴的四段格式，與上游的 `v0.1.18` 不會撞名。
 - 若專案有協定常數，確認 `TAB_PROTOCOL` 與 `EXPECTED_TAB_PROTOCOL` 一致。
 
 ## 2. Node.js 相容性
@@ -226,7 +227,58 @@ grep -R -n 'TAB_PROTOCOL\|EXPECTED_TAB_PROTOCOL' chrome-extension src
 
 不可只確認檔名；必須至少讀取一次產物內部的 manifest / package.json。
 
-## 8. 回報格式
+## 8. 發佈到 GitHub Release
+
+產物不進版控（`.gitignore` 已排除 `*.vsix` 與 `hadome-chrome-*.zip`），**GitHub Release 的附件是唯一的發佈通路**。使用者端的安裝方式是下載 `.vsix` 後手動安裝，不經 VS Code Marketplace（`publisher` 維持 `local`）。
+
+### 8.1 前置
+
+1. 功能已在 feature 分支完成，PR 已合併進 `develop`。
+2. Bump 版本 —— 只改 `package.json.version`（例 `0.1.18` → `0.1.18.1`）。Chrome Extension 若有改動，另外 bump `chrome-extension/manifest.json.version`；兩者版本序互相獨立。
+3. 依 §3–§7 完成打包與驗證。未通過交叉驗證前不要打 tag。
+
+### 8.2 合併到 main
+
+`develop` → `main` **一律由使用者親自在 GitHub 上合併**，見 [CLAUDE.md](../../CLAUDE.md)。不代為執行、不下 `gh pr merge`。
+
+### 8.3 打 tag 並推送
+
+```bash
+git tag 0.1.18.1
+git push origin 0.1.18.1
+```
+
+**驗收標準是遠端 ref 的 hash 等於本地 `main` 的 HEAD，不是 push 指令回報成功**：
+
+```bash
+rtk proxy git ls-remote --tags origin | grep 0.1.18.1
+rtk proxy git rev-parse main
+```
+
+兩個 hash 必須相同。push 輸出的「up-to-date」不足以當證據。
+
+### 8.4 建立 Release
+
+```bash
+gh release create 0.1.18.1 \
+  --title "hadome 0.1.18.1 — <一句話說明這版做了什麼>" \
+  --notes-file <release-notes.md> \
+  hadome-0.1.18.1.vsix hadome-chrome-0.60.0.zip
+```
+
+- 標題格式跟上游一致：`hadome <版本> — <一句話>`。
+- 附件用打包當次實際產出的檔名，不要猜 —— `tools/package-extension.js` 會在檔名已存在時自動加 `-1`、`-2` 尾碼。
+- Release notes 至少寫：新增/修正了什麼、是否同步了上游哪一版、安裝方式（下載 vsix 手動安裝）。
+
+### 8.5 發佈後確認
+
+```bash
+gh release view 0.1.18.1 --json tagName,assets --jq '{tag:.tagName, assets:[.assets[].name]}'
+```
+
+確認 tag 與兩個附件都在。
+
+## 9. 回報格式
 
 ### 已確認
 
@@ -273,3 +325,9 @@ grep -R -n 'TAB_PROTOCOL\|EXPECTED_TAB_PROTOCOL' chrome-extension src
 - [ ] 產物檔名與內部版本已交叉驗證
 - [ ] 協定常數一致性已驗證（若適用）
 - [ ] 已區分已確認與未完成項目
+
+發佈時再加上：
+
+- [ ] `develop` → `main` 已由使用者人工合併
+- [ ] tag 已推送，且遠端 ref hash == 本地 `main` HEAD
+- [ ] GitHub Release 已建立，`.vsix` 與 chrome `.zip` 兩個附件都在
