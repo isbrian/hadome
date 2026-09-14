@@ -82,6 +82,7 @@
   "command.deleteAllSessions.title": "Delete Saved Conversations…",
   "command.disconnectTab.title": "Disconnect from the Target Tab",
   "command.reconnectTab.title": "Reconnect to the Target Tab",
+  "command.pairTab.title": "Open a Tab Paired with This Window",
   "command.importChat.title": "Import Chat…",
   "config.projectUrl.description": "Where to start new conversations. Point it at a ChatGPT Project to have that project’s instructions apply (e.g. https://chatgpt.com/g/g-p-xxxx/project). Empty means plain chatgpt.com.",
   "command.writeProjectInstructions.title": "Write the Bridge Rules into a Project’s Instructions…",

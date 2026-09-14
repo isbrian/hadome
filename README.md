@@ -93,6 +93,26 @@ find each other over `ws://127.0.0.1:8765`.
 6. In the editor, open the **ChatGPT Bridge** panel. It should say the tab is connected.
 
 
+## More than one window
+
+Up to eight editor windows can run at once, each with a ChatGPT tab of its own.
+
+In each extra window, run **Open a Tab Paired with This Window** from the command
+palette. The window takes a free port (`8765`–`8775`, skipping `8767`–`8769`) and opens
+a tab pinned to it with `?bridge_port=`. A pinned tab only ever talks to that window —
+no other window can take it, and sub-agents get a port block of their own
+(`8810 + slot * 8`) so two windows never collide.
+
+The panel shows which port the window holds, so you can tell the windows apart.
+
+Two things to know:
+
+- **Both extensions must be the same version.** An older browser extension only looks at
+  `8765`, so it will never find the second window, and the failure is silent.
+- **One account, one rate limit.** Eight windows with two sub-agents each is twenty-four
+  tabs talking to ChatGPT at once. Two or three windows is the practical ceiling.
+
+
 ## Safety
 
 The agent runs on your machine, so the interesting part of this project is what it is
