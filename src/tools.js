@@ -5,7 +5,6 @@ const globalrules = require('./globalrules');
 const { normalizeTodos, todoCount } = require('./todo');
 const webfetch = require('./webfetch');
 const browser = require('./browser');
-const { makeQueryTools } = require('./tools/query-tools');
 
 const DEFAULT_ALLOWLIST = [
   'git status',
@@ -26,33 +25,40 @@ const DEFAULT_DENYLIST = [
     re: /(^|\s)--output(=|\s|$)/,
     why: '--output は作業場の外へ書けます',
     key: 'tool.deny.output',
+
+    一度だけ許せる: true,
   },
   {
     re: /^git\b[\s\S]*\bbranch\b[\s\S]*\s(-d|-D|-m|-M|--delete|--force|--move)(=|\s|$)/,
     why: 'git branch のこの引数は枝を消したり付け替えたりします',
     key: 'tool.deny.gitBranch',
+
+    一度だけ許せる: true,
   },
   {
-    re: /^node\b[\s\S]*(?<=^|\s)(-r|--require|--import|--loader|--experimental-loader|-e|--eval|-p|--print)(=|\s|$)/,
+
+    re: /^node(?=\s|$)[\s\S]*(^|\s)(-r|--require|--import|--loader|--experimental-loader|-e|--eval|-p|--print)(=|\s|$)/,
     why: 'node のこの引数は、構文を見る前に別のものを走らせます',
     key: 'tool.deny.nodePreload',
+
+    一度だけ許せる: true,
   },
 
   {
     re: /--remote-debugging-(port|pipe)(=|\s|$)/,
     why:
-      '遠隔デバッグの口を開く browser は、こちらからは起こせません。' +
-      '隔離した設定ファイルの browser は「隔離したブラウザーを起こす」' +
-      '（chatgptBridge.startBrowser）で起こしてください',
+      '遠隔デバッグの口を開く browser は、命令からは起こせません。' +
+      '隔離した browser は browser_open が自分で起こすので、そちらを使ってください',
     key: 'tool.deny.remoteDebugging',
+
   },
   {
     re: /(^|[\s"'/])(Google Chrome|Google Chrome Canary|Chromium|Microsoft Edge|Brave Browser)([\s"']|$)[\s\S]*--user-data-dir(=|\s)/,
     why:
-      'browser を別の設定ファイルで起こす事は、こちらからはできません。' +
-      '隔離した設定ファイルの browser は「隔離したブラウザーを起こす」' +
-      '（chatgptBridge.startBrowser）で起こしてください',
+      'browser を別の設定ファイルで起こす事は、命令からはできません。' +
+      '隔離した browser は browser_open が自分で起こすので、そちらを使ってください',
     key: 'tool.deny.browserProfile',
+
   },
 ];
 
@@ -76,14 +82,23 @@ function mergeDenylist(extra, onDropped = (x) => {
 
 function denyReason(command, denylist = DEFAULT_DENYLIST) {
   const c = String(command || '').trim().replace(/\s+/g, ' ');
+
+  const 当たり = [];
   for (const rule of denylist) {
     const re = rule.re instanceof RegExp ? rule.re : new RegExp(rule.re);
-
-    if (re.test(c)) {
-      return { why: rule.why || '否決の表に当たりました', key: rule.key || 'tool.deny.other' };
-    }
+    if (re.test(c)) 当たり.push(rule);
   }
-  return null;
+  if (!当たり.length) return null;
+
+  const 硬い = 当たり.find((r) => r.一度だけ許せる !== true) || 当たり[0];
+
+  return {
+
+    why: 当たり.map((r) => r.why || '否決の表に当たりました').join('\n'),
+    key: 硬い.key || 'tool.deny.other',
+
+    一度だけ許せる: 当たり.every((r) => r.一度だけ許せる === true),
+  };
 }
 
 class ToolError extends Error {
@@ -271,7 +286,7 @@ function readIgnoreRules(root) {
     .map(globToRegExp);
 }
 
-function whyBlocked(root, rel, { protectSecrets = true, ignoreRules = null } = {}) {
+function whyBlocked(root, rel, { protectSecrets = true } = {}) {
   const p = String(rel).replace(/\\/g, '/');
 
   if (isDangerousPath(p)) {
@@ -284,7 +299,7 @@ function whyBlocked(root, rel, { protectSecrets = true, ignoreRules = null } = {
   if (protectSecrets && SECRET_PATTERNS.some((re) => re.test(p))) {
     return '秘密が入っていそうなファイルなので中身を渡しません（設定 chatgptBridge.protectSecrets）';
   }
-  for (const re of ignoreRules || readIgnoreRules(root)) {
+  for (const re of readIgnoreRules(root)) {
     if (re.test(p)) return '.bridgeignore で除いてあるので中身を渡しません';
   }
   return null;
@@ -442,8 +457,6 @@ const RUNS_ANYTHING = new Set([
   'bash', 'sh', 'zsh', 'fish', 'dash', 'ksh', 'csh', 'tcsh',
   'node', 'deno', 'bun', 'python', 'python3', 'ruby', 'perl', 'php', 'osascript',
   'env', 'nohup', 'xargs', 'nice', 'time', 'sudo', 'doas', 'ssh', 'eval',
-
-  'command',
 ]);
 
 function canRememberAlways(prog) {
@@ -486,203 +499,6 @@ function splitArgs(command) {
   if (quote) throw new ToolError(`引用符が閉じていません: ${command}`, 'tool.quote', { command });
   if (cur || has) argv.push(cur);
   return argv;
-}
-
-const CMD_UNSAFE = {
-  substitution: 'cmd.unsafe.substitution',
-  runsAnything: 'cmd.unsafe.runsAnything',
-  findExec: 'cmd.unsafe.findExec',
-  redirect: 'cmd.unsafe.redirect',
-  assignment: 'cmd.unsafe.assignment',
-  parse: 'cmd.unsafe.parse',
-};
-
-const KW_STAY = new Set(['if', 'while', 'until', 'then', 'else', 'elif', 'do', '!', '{']);
-
-const KW_SKIP = new Set(['for', 'select', 'case', 'fi', 'done', 'esac', 'in', 'function', '}']);
-
-const FIND_EXECS = new Set(['-exec', '-execdir', '-ok', '-okdir', '-delete']);
-
-const REDIR = /^(>>|>|<)(&?)\s*([^\s;&|()<>]*)/;
-
-function redirTargetOk(target) {
-  if (!target) return false;
-  if (target === '/dev/null') return true;
-  if (target.startsWith('/') || target.startsWith('~')) return false;
-  if (target.split('/').includes('..')) return false;
-
-  if (/[$`]/.test(target)) return false;
-  return true;
-}
-
-function commandPrograms(command) {
-  const s = String(command || '');
-  const segments = [];
-  const progs = [];
-  let unsafe = null;
-  const fail = (key) => {
-    if (!unsafe) unsafe = key;
-  };
-
-  let quote = null;
-  let cur = '';
-  let curHas = false;
-
-  let segStart = 0;
-  let segProg = null;
-  let segArgs = [];
-  let atCmd = true;
-
-  const flushWord = (endIdx) => {
-    if (!cur && !curHas) return;
-    const w = cur;
-    cur = '';
-    curHas = false;
-    if (!atCmd) {
-      segArgs.push(w);
-      return;
-    }
-
-    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) {
-
-      fail(CMD_UNSAFE.assignment);
-      segStart = endIdx;
-      return;
-    }
-    if (KW_STAY.has(w)) {
-      segStart = endIdx;
-      return;
-    }
-    if (KW_SKIP.has(w)) {
-      segStart = endIdx;
-      atCmd = false;
-      return;
-    }
-    segProg = w;
-    atCmd = false;
-  };
-
-  const endSegment = (endIdx) => {
-    flushWord(endIdx);
-    if (segProg) {
-      const prog = expandHome(segProg);
-      const base = prog.split('/').pop();
-      if (/[$`]/.test(segProg)) fail(CMD_UNSAFE.parse);
-      if (RUNS_ANYTHING.has(base)) fail(CMD_UNSAFE.runsAnything);
-      if (base === 'find' && segArgs.some((a) => FIND_EXECS.has(a))) fail(CMD_UNSAFE.findExec);
-      segments.push(s.slice(segStart, endIdx).trim());
-      if (!progs.includes(prog)) progs.push(prog);
-    }
-    segProg = null;
-    segArgs = [];
-  };
-
-  let i = 0;
-  while (i < s.length) {
-    const c = s[i];
-
-    if (quote) {
-      if (c === quote) {
-        quote = null;
-        i += 1;
-        continue;
-      }
-      if (quote === '"') {
-        if (c === '`') {
-          fail(CMD_UNSAFE.substitution);
-          i += 1;
-          continue;
-        }
-        if (c === '$' && s[i + 1] === '(') {
-          fail(CMD_UNSAFE.substitution);
-          i += 2;
-          continue;
-        }
-        if (c === '\\' && i + 1 < s.length) {
-          cur += s[i + 1];
-          i += 2;
-          continue;
-        }
-      }
-      cur += c;
-      i += 1;
-      continue;
-    }
-
-    if (c === '\\') {
-      if (i + 1 >= s.length) {
-        fail(CMD_UNSAFE.parse);
-        break;
-      }
-      cur += s[i + 1];
-      curHas = true;
-      i += 2;
-      continue;
-    }
-
-    if (c === '"' || c === "'") {
-      quote = c;
-      curHas = true;
-      i += 1;
-      continue;
-    }
-
-    if (c === '`') {
-      fail(CMD_UNSAFE.substitution);
-      i += 1;
-      continue;
-    }
-    if (c === '$' && s[i + 1] === '(') {
-      fail(CMD_UNSAFE.substitution);
-      i += 2;
-      continue;
-    }
-
-    if (c === '>' || c === '<') {
-      flushWord(i);
-      const m = REDIR.exec(s.slice(i));
-      if (!m) {
-        fail(CMD_UNSAFE.parse);
-        i += 1;
-        continue;
-      }
-
-      if (!m[2] && !redirTargetOk(m[3])) fail(CMD_UNSAFE.redirect);
-      i += m[0].length;
-      continue;
-    }
-
-    if (c === '\n' || c === '\r' || c === ';' || c === '&' || c === '|') {
-      const two = s.slice(i, i + 2);
-      endSegment(i);
-      i += two === '&&' || two === '||' || two === ';;' ? 2 : 1;
-      segStart = i;
-      atCmd = true;
-      continue;
-    }
-
-    if (c === '(' || c === ')') {
-      endSegment(i);
-      i += 1;
-      segStart = i;
-      atCmd = c === '(';
-      continue;
-    }
-
-    if (/\s/.test(c)) {
-      flushWord(i);
-      i += 1;
-      continue;
-    }
-
-    cur += c;
-    i += 1;
-  }
-
-  if (quote) fail(CMD_UNSAFE.parse);
-  endSegment(s.length);
-
-  return { segments, progs, unsafe };
 }
 
 const checkpoint = require('./checkpoint');
@@ -902,6 +718,8 @@ function makeTools({
 
   onAllowAlways = null,
 
+  isRevoked = null,
+
   mcp = null,
 
   allowedMcpServers: allowedMcpServersIn = [],
@@ -909,6 +727,8 @@ function makeTools({
   allowedSites: allowedSitesIn = [],
 
   browserProfile = '',
+
+  browserPath = '',
   openTabs: openTabsIn = null,
 
   onOpenTabs = null,
@@ -954,10 +774,65 @@ function makeTools({
   const allowedSite = new Set(allowedSitesIn.map((x) => String(x)));
 
   if (browserProfile) process.env.BRIDGE_BROWSER_PROFILE = browserProfile;
+
+  if (browserPath) process.env.BRIDGE_BROWSER_PATH = browserPath;
+
+  const 目印を読む = (call, 深さ = 0) => {
+    const 目印 = {
+      role: String(call.role || '').trim(),
+      name: String(call.name || '').trim(),
+      selector: String(call.selector || '').trim(),
+      text: String(call.text || '').trim(),
+      key: String(call.key || '').trim(),
+    };
+
+    if (call.中 && typeof call.中 === 'object' && !Array.isArray(call.中)) {
+      if (深さ >= 5) {
+        throw new ToolError(
+          '入れ子が深すぎます（5 段 まで）。browser_read の写しを見て、近い入れ物から書いてください。',
+          'tool.browserNestTooDeep'
+        );
+      }
+      目印.中 = 目印を読む(call.中, 深さ + 1);
+    }
+    if (!目印.role && !目印.selector && !目印.text && !目印.key) {
+      throw new ToolError(
+        'role（と name）か、selector か、text を渡してください。\n' +
+          'browser_read の写しに出ている通りに書けます（例: role="combobox", name="月"）。',
+        'tool.browserNoTarget'
+      );
+    }
+    return 目印;
+  };
+  const 目印の字 = (目印) => {
+    const 頭 = 目印.role
+      ? `${目印.role}${目印.name ? ` "${目印.name}"` : ''}`
+      : 目印.selector || 目印.text || 目印.key || '(焦点)';
+
+    return 目印.中 ? `${頭} > ${目印の字(目印.中)}` : 頭;
+  };
+
   const 開いたタブ = new Map(openTabsIn || []);
 
   let いま見ているタブ = null;
-  const under = (set, abs) => [...set].some((d2) => abs === d2 || abs.startsWith(d2 + path.sep));
+
+  const 取り消された = (kind, detail) => {
+    if (!isRevoked) return false;
+    try {
+      return !!isRevoked({ kind, detail: String(detail) });
+    } catch {
+
+      return true;
+    }
+  };
+
+  const under = (set, abs, kind) =>
+    [...set].some(
+      (d2) => (abs === d2 || abs.startsWith(d2 + path.sep)) && !取り消された(kind, d2)
+    );
+
+  const 生きている許可 = () =>
+    isRevoked ? allowlist.filter((a) => !取り消された('command', a)) : allowlist;
 
   const askOrPass = async (q) => {
     if (mode === 'never') return 'once';
@@ -982,8 +857,8 @@ function makeTools({
       if (!/ワークスペースの外です/.test(String(e.message))) throw e;
       const abs = path.resolve(root, expandHome(String(rel)));
 
-      if (under(allowedWrite, abs)) return abs;
-      if (!write && under(allowedRead, abs)) return abs;
+      if (under(allowedWrite, abs, 'pathWrite')) return abs;
+      if (!write && under(allowedRead, abs, 'path')) return abs;
       const answer = await askOrPass({ kind: write ? 'pathWrite' : 'path', detail: abs });
       if (answer === 'always') {
 
@@ -995,7 +870,14 @@ function makeTools({
         }
 
         (write ? allowedWrite : allowedRead).add(dir);
-        if (onAllowAlways) onAllowAlways({ kind: write ? 'pathWrite' : 'path', detail: dir });
+
+        if (onAllowAlways) {
+          try {
+            await onAllowAlways({ kind: write ? 'pathWrite' : 'path', detail: dir });
+          } catch {
+
+          }
+        }
       } else if (answer !== 'once') {
 
         throw new ToolError(
@@ -1103,33 +985,70 @@ function makeTools({
           (r.imagesTotal > 絵.length ? `\n  （ほかに ${r.imagesTotal - 絵.length} 枚 あります）` : '')
         : '';
 
+      const 写しの行 = r.写しが読めない
+        ? `\n\n作り（役目と名前）: 読めませんでした（${r.写しが読めない}）`
+        : r.写し
+          ? '\n\n作り（browser_set / browser_click の role と name は ここから写せます）:\n' +
+            r.写し +
+            (r.写しを切った ? `\n  （長いので ${r.写しを切った} 字 切りました）` : '')
+          : '';
+      const 本文の行 = r.本文が読めない
+        ? `読めませんでした（${r.本文が読めない}）`
+        : `${r.text || ''}${r.本文を切った ? `\n  （長いので ${r.本文を切った} 字 切りました）` : ''}`;
       const body =
-        `題名: ${r.title || '(題なし)'}\n場所: ${r.url}\n\n本文:\n${r.text || ''}${絵の行}`;
+        `題名: ${r.title || '(題なし)'}\n場所: ${r.url}${写しの行}\n\n本文:\n${本文の行}${絵の行}`;
       return { ok: true, target: r.url || id, ...withFull(body, clipMiddle(body)) };
     },
 
     async browser_click(call) {
 
-      const selector = String(call.selector || '').trim();
-      const text = String(call.text || '').trim();
-      if (!selector && !text) {
-        throw new ToolError('selector か text のどちらかを渡してください', 'tool.browserNoTarget');
-      }
+      const 目印 = 目印を読む(call);
       const id = await タブを決める(call.tab);
 
       const いま = await browser.targetOf(id);
-      await 站の関門((いま && いま.url) || '', `browser_click ${selector || text}`);
-      const r = await browser.click(id, { selector, text });
+      await 站の関門((いま && いま.url) || '', `browser_click ${目印の字(目印)}`);
+      const r = await browser.click(id, 目印);
       if (!r || !r.ok) {
 
         throw new ToolError(
           `押せませんでした: ${(r && r.why) || '理由が返りません'}（当たり ${(r && r.n) || 0} 件）\n` +
-            'browser_read で頁を読んでから、selector を絞ってください。',
+            'browser_read で頁を読んでから、絞ってください。\n' +
+            '同じ名前が並ぶ時は、入れ物で絞れます（写しの入れ子のとおりに書けます）:\n' +
+            '  {"role":"row","name":"田中","中":{"role":"button","name":"編輯"}}',
           'tool.browserClickFail',
           { why: (r && r.why) || '', n: String((r && r.n) || 0) }
         );
       }
-      return { ok: true, target: r.label || selector || text, output: `押しました: ${r.label || selector || text}` };
+      return {
+        ok: true,
+        target: r.label || 目印の字(目印),
+        output: `押しました: ${r.label || 目印の字(目印)}`,
+      };
+    },
+
+    async browser_set(call) {
+      const 目印 = 目印を読む(call);
+      if (call.value === undefined || call.value === null) {
+        throw new ToolError('value を渡してください（勾は真偽、選ぶ欄は見えている字）', 'tool.browserNoValue');
+      }
+      const id = await タブを決める(call.tab);
+
+      const いま = await browser.targetOf(id);
+      await 站の関門((いま && いま.url) || '', `browser_set ${目印の字(目印)}`);
+      const r = await browser.set(id, 目印, call.value);
+      if (!r || !r.ok) {
+        throw new ToolError(
+          `値を入れられませんでした: ${(r && r.why) || '理由が返りません'}（当たり ${(r && r.n) || 0} 件）\n` +
+            'browser_read で頁を読んで、写しに出ている役目（role）と名前（name）をそのまま渡してください。',
+          'tool.browserSetFail',
+          { why: (r && r.why) || '', n: String((r && r.n) || 0) }
+        );
+      }
+      return {
+        ok: true,
+        target: 目印の字(目印),
+        output: `入れました。いま入っているのは: ${JSON.stringify(r.value || '')}`,
+      };
     },
 
     async browser_shot(call) {
@@ -1171,17 +1090,25 @@ function makeTools({
 
       const text = String(call.text || '');
       const key = String(call.key || '').trim();
-      const selector = String(call.selector || '').trim();
       if (!text && !key) {
         throw new ToolError('text か key のどちらかを渡してください', 'tool.browserNoText');
       }
+
+      const 目印 = {
+        role: String(call.role || '').trim(),
+        name: String(call.name || '').trim(),
+        selector: String(call.selector || '').trim(),
+        text,
+        key,
+      };
+      const 指す = 目印.role || 目印.selector ? 目印の字(目印) : '(いま焦点が在る所)';
       const id = await タブを決める(call.tab);
 
       const いま = await browser.targetOf(id);
-      await 站の関門((いま && いま.url) || '', `browser_type ${selector || '(いま焦点が在る所)'}`);
+      await 站の関門((いま && いま.url) || '', `browser_type ${指す}`);
       let r;
       try {
-        r = await browser.type(id, { selector, text, key });
+        r = await browser.type(id, 目印);
       } catch (e) {
         throw new ToolError(e.message, 'tool.browserTypeFail', { why: e.message });
       }
@@ -1196,7 +1123,7 @@ function makeTools({
 
       return {
         ok: true,
-        target: selector || key || '(焦点)',
+        target: 指す,
         output:
           `打ちました${key ? `（鍵: ${key}）` : ''}。` +
           `いまその欄に入っているのは: ${JSON.stringify(r.value || '')}`,
@@ -1344,24 +1271,53 @@ function makeTools({
       };
     },
 
-    ...makeQueryTools({
-      ToolError,
-      clip,
-      clipMiddle,
-      withFull,
-      wantName,
-      CONFIG_OPEN,
-      globalrules,
-      webfetch,
-      normalizeTodos,
-      todoCount,
-      spawnAgents,
-      seenUrls,
-      onTodos,
-      readSetting,
-      writeSetting,
-      askOrPass,
-    }),
+    async config(call) {
+      const setting = String(call.setting || '').trim();
+      if (!setting) {
+        throw new ToolError(
+          `どの設定かを渡してください。読み書きできるのは: ${CONFIG_OPEN.join(' / ')}`,
+          'tool.noSetting'
+        );
+      }
+      if (!CONFIG_OPEN.includes(setting)) {
+
+        throw new ToolError(
+          `その設定は相手からは触れません: ${setting}\n` +
+            `触れるのは: ${CONFIG_OPEN.join(' / ')}\n` +
+            '許しや関門にかかわる設定は、利用者が画面から変えるものです。',
+          'tool.settingClosed',
+          { setting }
+        );
+      }
+      if (!readSetting) {
+        throw new ToolError('この入口では設定を読めません（対話の画面から使ってください）', 'tool.subNoCli');
+      }
+      if (call.value === undefined) {
+        return {
+          ok: true,
+          target: setting,
+          output: `${setting} = ${JSON.stringify(readSetting(setting))}`,
+        };
+      }
+      if (!writeSetting) {
+        throw new ToolError('この入口では設定を書けません（対話の画面から使ってください）', 'tool.subNoCli');
+      }
+      const 前 = readSetting(setting);
+
+      const 答え = await askOrPass({
+        kind: 'setting',
+        detail: `${setting}\n  いま: ${JSON.stringify(前)}\n  あとで: ${JSON.stringify(call.value)}`,
+      });
+      if (答え !== 'once' && 答え !== 'always') {
+        throw new ToolError(`設定の書き換えは断られました: ${setting}`, 'tool.settingRefused', { setting });
+      }
+      await writeSetting(setting, call.value);
+      return {
+        ok: true,
+        target: setting,
+        output: `${setting} を ${JSON.stringify(前)} から ${JSON.stringify(call.value)} へ変えました。`,
+      };
+    },
 
     async enter_worktree(call) {
       if (写し) {
@@ -1471,7 +1427,6 @@ function makeTools({
       const 起点 = await pathFor(call.path || '.');
       const re = pathGlobToRegExp(pattern);
       const 探してよい = respectGitIgnore ? notIgnored(root) : null;
-      const ignoreRules = readIgnoreRules(root);
       const 当たり = [];
       let 打ち切った = false;
       const walk = (dir) => {
@@ -1497,7 +1452,7 @@ function makeTools({
 
           const fromRoot = path.relative(root, full);
           if (探してよい && !探してよい.has(fromRoot)) continue;
-          if (whyBlocked(root, fromRoot, { protectSecrets, ignoreRules })) continue;
+          if (whyBlocked(root, fromRoot, { protectSecrets })) continue;
           let mtime = 0;
           try {
             mtime = fs.statSync(full).mtimeMs;
@@ -1527,6 +1482,207 @@ function makeTools({
         出す.map((x) => x.rel).join('\n') +
         (打ち切った ? `\n…（${GLOB_MAX} 件で切りました。様式を細くしてください）` : '');
       return { ok: true, target: `${出す.length} 件`, ...withFull(body, clipMiddle(body)) };
+    },
+
+    async codebase_search(call) {
+      const query = String(call.query || '').trim();
+      if (!query) throw new ToolError('探したい事を query に書いてください', 'tool.noQuery');
+      if (!spawnAgents) {
+        throw new ToolError(
+          'この入口では意味で探せません（対話の画面から使ってください）。字で探すなら search が使えます',
+          'tool.subNoCli'
+        );
+      }
+      const 場所 = String(call.path || '').trim();
+      const 頼み =
+        `この作業場から「${query}」に関わる所を探してください。` +
+        (場所 ? `探す先は ${場所} の下だけです。` : '') +
+        '\n\n**字が一致する所だけを見ないでください。**言い方が違っても、' +
+        'その事をやっている所を探します（名前・註釈・呼び出し先から辿る）。' +
+        '\n\n返す形:' +
+        '\n  1. <道>:<行> — なぜ関わるか（1 行）' +
+        '\n  2. …' +
+        '\n\n近い順に、多くて 10 件。**1 件も無ければ「無い」と書いてください**' +
+        '（当てはまらない物で埋めない）。';
+      const r = await spawnAgents([頼み]);
+      if (r.why) throw new ToolError(r.why, 'tool.subFail', { why: r.why });
+      const body = r.text || '';
+      return { ok: true, target: query, ...withFull(body, clipMiddle(body)) };
+    },
+
+    async web_search(call) {
+      const query = String(call.query || '').trim();
+      if (!query) throw new ToolError('探す言葉を渡してください', 'tool.noQuery');
+      let res;
+      let html;
+      try {
+        res = await fetch(webfetch.searchUrl(query), {
+          redirect: 'follow',
+          headers: { 'user-agent': 'chatgpt-bridge', accept: 'text/html' },
+          signal: AbortSignal.timeout(30000),
+        });
+        html = await res.text();
+      } catch (e) {
+        throw new ToolError(`探せませんでした: ${e.message}`, 'tool.searchFail', { why: e.message });
+      }
+      if (!res.ok) {
+        throw new ToolError(`探せませんでした（${res.status}）`, 'tool.searchStatus', { status: res.status });
+      }
+      const hits = webfetch.searchResults(html);
+      if (!hits.length) {
+
+        return {
+          ok: true,
+          target: query,
+          output:
+            html.length > 2000
+              ? `結果を取り出せませんでした（${html.length} 字は返って来ています）。` +
+                '探す先の作りが変わった見込みです。**「見つからなかった」ではありません。**'
+              : `当たりませんでした: ${query}`,
+        };
+      }
+
+      if (seenUrls) for (const h of hits) seenUrls.add(h.url);
+      const body = hits
+        .map((h, i) => `${i + 1}. ${h.title}\n   ${h.url}${h.snippet ? `\n   ${h.snippet}` : ''}`)
+        .join('\n');
+      return {
+        ok: true,
+        target: query,
+        ...withFull(body, clipMiddle(body)),
+      };
+    },
+
+    async web_fetch(call) {
+      const url = String(call.url || '').trim();
+      if (!/^https?:\/\//i.test(url)) {
+        throw new ToolError('http か https の場所を渡してください', 'tool.httpOnly');
+      }
+      const seen = seenUrls || new Set();
+      if (!webfetch.hasProvenance(url, seen)) {
+
+        const answer = await askOrPass({ kind: 'url', detail: url });
+        if (answer !== 'once' && answer !== 'always') {
+          throw new ToolError(
+            `この場所は、この対話にまだ出てきていません: ${url}\n` +
+              '利用者が出した場所と、そこから辿れた場所だけを取りに行けます。\n' +
+              '要るなら、利用者に場所を書いてもらってください。',
+            'tool.urlUnseen',
+            { url }
+          );
+        }
+      }
+      let res;
+      try {
+        res = await fetch(url, {
+          redirect: 'follow',
+          headers: { 'user-agent': 'chatgpt-bridge', accept: 'text/html,text/plain,*/*' },
+          signal: AbortSignal.timeout(30000),
+        });
+      } catch (e) {
+        throw new ToolError(`取れませんでした: ${e.message}`, 'tool.fetchFail', { why: e.message });
+      }
+      if (!res.ok) throw new ToolError(`取れませんでした（${res.status}）: ${url}`, 'tool.fetchStatus', { status: res.status, url });
+      const kind = String(res.headers.get('content-type') || '');
+      const raw = await res.text();
+
+      if (seenUrls) {
+        for (const u of webfetch.collectUrls(raw)) seenUrls.add(u);
+        seenUrls.add(String(res.url || url));
+      }
+      const isHtml = /html/i.test(kind) || /^\s*<(!doctype|html)/i.test(raw);
+      const body = isHtml ? webfetch.htmlToText(raw) : raw;
+      const title = isHtml ? webfetch.titleOf(raw) : '';
+
+      const hostOf = (u) => {
+        try {
+          return new URL(u).host;
+        } catch {
+          return '';
+        }
+      };
+      const 移った = res.url && webfetch.normalizeUrl(res.url) !== webfetch.normalizeUrl(url);
+      const 別のサーバ = 移った && hostOf(res.url) && hostOf(res.url) !== hostOf(url);
+      const moved = !移った
+        ? ''
+        : 別のサーバ
+          ? `**別の場所へ飛ばされました。**頼まれたのは ${hostOf(url)} ですが、` +
+            `着いたのは ${hostOf(res.url)} です:\n  ${res.url}\n` +
+            '**下の中身は、頼まれた場所の物ではありません**（ログインの画面などです）。' +
+            'これを答えの材料にしないでください。要るなら、上の場所を web_fetch で取り直すか、' +
+            '取れないことを利用者に伝えてください。\n\n'
+          : `（${res.url} へ移りました）\n`;
+      return {
+        ok: true,
+        target: title || url,
+        output: clip(moved + body),
+      };
+    },
+
+    update_todos(call) {
+      const r = normalizeTodos(call.todos);
+      if (!r.ok) return { ok: false, output: r.why };
+      if (onTodos) onTodos(r.todos);
+      const n = todoCount(r.todos);
+      return {
+        ok: true,
+        target: `${n.done}/${n.all}`,
+
+        output: r.fixed
+          ? `${n.all} 件を控えました（進行中が 2 件以上あったので、最初の 1 件だけ残しました）`
+          : `${n.all} 件を控えました（終わり ${n.done}）`,
+      };
+    },
+
+    read_rule(call) {
+      const name = wantName(call.name, '決まり');
+
+      if (name !== globalrules.RULES_BODY_NAME && !globalrules.listRules(null).includes(name)) {
+        throw new ToolError(
+          `そんな決まりはありません: ${name}（読める名前は最初の指示の §13 の表に出ています）`,
+          'tool.noRule',
+          { name }
+        );
+      }
+      return {
+        ok: true,
+        target: name,
+        output: clip(globalrules.readRule(null, name)),
+      };
+    },
+
+    search_skills(call) {
+      const hit = globalrules.searchSkills(null, call.query);
+      if (!hit.length) {
+
+        return {
+          ok: true,
+          target: String(call.query || ''),
+          output: '当てはまるものがありませんでした。名前だけの一覧は最初の指示に出ています。',
+        };
+      }
+      return {
+        ok: true,
+        target: String(call.query || ''),
+        output: hit.map((x) => `- ${x.name}: ${x.description}`).join('\n'),
+      };
+    },
+
+    read_skill(call) {
+      const name = wantName(call.name, '手順書');
+
+      if (!globalrules.skillNames(null, { forHuman: true }).includes(name)) {
+        throw new ToolError(
+          `そんな手順書はありません: ${name}（読める名前は最初の指示に出ています）`,
+          'tool.noSkill',
+          { name }
+        );
+      }
+      return {
+        ok: true,
+        target: name,
+        output: clip(globalrules.readSkill(null, name), 20000),
+      };
     },
 
     async read_file(call) {
@@ -1749,6 +1905,8 @@ function makeTools({
       const file = await pathFor(call.path, { write: true });
       const exists = fs.existsSync(file);
 
+      guardOverwrite(call.path, file);
+
       if (!exists) {
         if (call.old_text) {
           throw new ToolError('ファイルがありません。作る場合は old_text を付けないでください', 'tool.noFileForEdit');
@@ -1934,7 +2092,6 @@ function makeTools({
       let scanned = 0;
 
       const 探してよい = respectGitIgnore ? notIgnored(root) : null;
-      const ignoreRules = readIgnoreRules(root);
       const walk = (dir) => {
         if (hits.length >= cap) return;
         let items;
@@ -1966,16 +2123,16 @@ function makeTools({
             if (!fileRe.test(it.name) && !fileRe.test(relForPat)) continue;
           }
           scanned += 1;
-          const rel = path.relative(root, full);
-
-          if (探してよい && !探してよい.has(rel)) continue;
-          if (whyBlocked(root, rel, { protectSecrets, ignoreRules })) continue;
           let body;
           try {
             body = fs.readFileSync(full, 'utf8');
           } catch {
             continue;
           }
+          const rel = path.relative(root, full);
+
+          if (探してよい && !探してよい.has(rel)) continue;
+          if (whyBlocked(root, rel, { protectSecrets })) continue;
           body.split('\n').forEach((line, i) => {
             if (!全部歩く && hits.length >= cap) return;
             re.lastIndex = 0;
@@ -2036,22 +2193,13 @@ function makeTools({
 
       const guardedPath = guardedPathInCommand(cmd);
 
-      const parsed = meta ? commandPrograms(cmd) : null;
+      const 許可 = 生きている許可();
 
-      const metaOk =
-        !!parsed &&
-        !parsed.unsafe &&
-        parsed.segments.length > 0 &&
-        parsed.segments.every((s) => isAllowed(s, allowlist));
+      if (denied || meta || guardedPath || !isAllowed(cmd, 許可)) {
 
-      if (denied || guardedPath || (meta ? !metaOk : !isAllowed(cmd, allowlist))) {
+        const prog = expandHome(splitArgs(cmd)[0] || cmd);
 
-        const remembers = meta
-          ? parsed.progs
-          : [expandHome(splitArgs(cmd)[0] || cmd)].filter(canRememberAlways);
-
-        const rememberable =
-          !denied && !guardedPath && !(parsed && parsed.unsafe) && remembers.length > 0;
+        const rememberable = !denied && !meta && !guardedPath && canRememberAlways(prog);
         const answer = await askOrPass({
           kind: 'command',
           detail: denied
@@ -2059,20 +2207,30 @@ function makeTools({
             : guardedPath
               ? `${cmd}\n（触らせない場所を名指ししています: ${guardedPath}）`
               : cmd,
-          always: rememberable ? (meta ? remembers : remembers[0]) : null,
-
-          whyKey: !denied && !guardedPath && parsed ? parsed.unsafe : null,
+          always: rememberable ? prog : null,
         });
         if (answer === 'always' && rememberable) {
-          allowlist = allowlist.concat(remembers.filter((p) => !allowlist.includes(p)));
+          allowlist = allowlist.concat([prog]);
+
           if (onAllowAlways) {
-            onAllowAlways({ kind: 'command', detail: meta ? remembers : remembers[0] });
+            try {
+              await onAllowAlways({ kind: 'command', detail: prog });
+            } catch {
+
+            }
           }
-        } else if (denied) {
+
+        } else if (denied && !(denied.一度だけ許せる && answer === 'once' && !guardedPath && !meta)) {
+
+          const 断りの理由 = !askPermission
+            ? ''
+            : answer === 'no'
+              ? '利用者が許しませんでした。\n'
+              : '利用者は許しましたが、この引数は否決の表に在るので走らせません。\n';
           throw new ToolError(
             `この引数は自動では通しません: ${cmd}\n` +
               `${denied.why}\n` +
-              (askPermission ? '利用者が許しませんでした。\n' : '') +
+              断りの理由 +
               '引数を外して書き直してください。',
             denied.key,
             { cmd }
@@ -2091,9 +2249,9 @@ function makeTools({
             `許可リストにありません: ${cmd}\n` +
               (askPermission ? '利用者が許しませんでした。\n' : '') +
               '走らせてよいのは次だけです:\n' +
-              allowlist.map((a) => `  - ${a}`).join('\n'),
+              許可.map((a) => `  - ${a}`).join('\n'),
             askPermission ? 'tool.notAllowedNo' : 'tool.notAllowed',
-            { cmd, list: allowlist.map((a) => `  - ${a}`).join('\n') }
+            { cmd, list: 許可.map((a) => `  - ${a}`).join('\n') }
           );
         }
       }
@@ -2280,7 +2438,7 @@ function makeTools({
       if (seenUrls) seenUrls.add(url);
     }
 
-    if (allowedSite.has(站)) return;
+    if (allowedSite.has(站) && !取り消された('browser', 站)) return;
     const answer = await askOrPass({
       kind: 'browser',
       detail: 何を ? `${何を}\n${url}` : url,
@@ -2335,7 +2493,7 @@ function makeTools({
   };
 
   const mcpGate = async (server, 何を, 中身) => {
-    if (allowedMcp.has(server)) return;
+    if (allowedMcp.has(server) && !取り消された('mcp', server)) return;
     const answer = await askOrPass({
       kind: 'mcp',
 
@@ -2610,8 +2768,6 @@ module.exports = {
   splitArgs,
   expandHome,
   canRememberAlways,
-  commandPrograms,
-  CMD_UNSAFE,
   SHELL_META,
   EXPANDS_IN_DQUOTE,
   isGitRepo,

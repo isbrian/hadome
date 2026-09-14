@@ -2,7 +2,7 @@
   "name": "hadome",
   "displayName": "%extension.displayName%",
   "description": "%extension.description%",
-  "version": "0.1.10.2",
+  "version": "0.1.18",
   "publisher": "local",
   "private": true,
   "license": "AGPL-3.0-or-later",
@@ -215,11 +215,6 @@
         "category": "%extension.displayName%"
       },
       {
-        "command": "chatgptBridge.pairTab",
-        "title": "%command.pairTab.title%",
-        "category": "%extension.displayName%"
-      },
-      {
         "command": "chatgptBridge.importChat",
         "title": "%command.importChat.title%",
         "category": "%extension.displayName%"
@@ -353,8 +348,10 @@
               "browser_open",
               "browser_read",
               "browser_click",
+              "browser_set",
               "browser_shot",
               "browser_type",
+              "browser_close",
               "browser_scroll",
               "browser_save",
               "spawn_agents",
@@ -409,6 +406,11 @@
           ],
           "default": "needsYou",
           "markdownDescription": "パネルが見えていない時に、エディターの知らせを出すかどうか。参考実装（Claude Code）も「待たせている時」と「終わった時」の 2 つの時機を持ちます。**パネルが見えている時は出しません**（目の前に在る物を知らせるのは雑音）。"
+        },
+        "chatgptBridge.thinking": {
+          "type": "boolean",
+          "default": false,
+          "description": "%config.thinking.description%"
         },
         "chatgptBridge.mode": {
           "type": "string",
@@ -729,6 +731,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
     "@vscode/codicons": "^0.0.46-24",
+    "playwright-core": "1.63.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "ws": "^8.18.0"

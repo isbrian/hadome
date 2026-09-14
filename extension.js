@@ -9,7 +9,6 @@ const { describeUsage } = require('./src/usage');
 const os = require('os');
 const fs = require('fs');
 const { openBridge } = require('./src/bridge');
-const portlock = require('./src/portlock');
 
 const { projectInstructions } = require('./src/projectrules');
 const { runAgent, toolStateOf } = require('./src/agent');
@@ -62,7 +61,6 @@ const SECONDARY_SINCE = { major: 1, minor: 106 };
 
 const BEFORE_SCHEME = 'chatgpt-bridge-before';
 const beforeStore = new Map();
-const BEFORE_KEEP = 200;
 
 const beforeProvider = {
   provideTextDocumentContent(uri) {
@@ -209,14 +207,8 @@ function log(s) {
   if (channel) channel.appendLine(s);
 }
 
-function sendTo(webviewView, type, data, id) {
-  if (webviewView) {
-    webviewView.webview.postMessage({ type, data: data || {}, id: id || null });
-  }
-}
-
 function send(type, data, id) {
-  sendTo(view, type, data, id);
+  if (view) view.webview.postMessage({ type, data: data || {}, id: id || null });
 }
 
 function post(msg) {
@@ -266,6 +258,9 @@ function settings() {
 
     subPortBase: c.get('subPortBase', 8810),
 
+    browserPath: c.get('browserPath', ''),
+    browserProfile: c.get('browserProfile', ''),
+
     disabledTools: c.get('disabledTools', []),
     respectGitIgnore: c.get('respectGitIgnore', true),
 
@@ -276,6 +271,8 @@ function settings() {
     mcp: c.get('mcp', false),
 
     mode: c.get('mode', 'ask'),
+
+    thinking: c.get('thinking', false),
 
     outputStyle: c.get('outputStyle', ''),
     requireModifierToSend: c.get('requireModifierToSend', true),
@@ -355,20 +352,9 @@ function projectHomeOf(url) {
   return m ? `${m[1]}/project` : '';
 }
 
-const PAIRED_KEY = 'chatgptBridge.pairedTab';
-
-function pairedFor() {
-  try {
-    if (store && store.get(PAIRED_KEY, false)) return true;
-  } catch {
-
-  }
-
-  return settings().port !== portlock.PORT_FROM;
-}
-
-async function ensureBridge(s, port, { waitTab = true } = {}) {
+async function ensureBridge(s, port) {
   if (s.bridge) return true;
+  post({ type: 'note', text: t('note.waitingTab') });
   try {
     s.bridge = await openBridge({
       port,
@@ -376,17 +362,18 @@ async function ensureBridge(s, port, { waitTab = true } = {}) {
 
       workspace: pickWorkspace() || '',
 
-      paired: pairedFor,
-
       t: (k, v) => t(k, v),
 
       onConversationChange: (id, url, title, fromId) =>
         handleConversationChange(s, id, url, fromId),
+
+      onThinkingState: (st) => {
+        post({
+          type: 'thinking',
+          on: st && st.present && st.usable ? !!st.on : null,
+        });
+      },
     });
-
-    if (!waitTab) return true;
-
-    post({ type: 'note', text: t('note.waitingTab', { port: s.bridge.port }) });
 
     await s.bridge.waitForTab();
 
@@ -409,13 +396,13 @@ async function ensureBridge(s, port, { waitTab = true } = {}) {
       s.started = true;
 
       log(`[bridge] 続きとみなしました（決まりの指紋 ${rulesNow}）`);
-      post({ type: 'note', text: t('note.tabResumed', { port: s.bridge.port }) });
+      post({ type: 'note', text: t('note.tabResumed') });
     } else {
 
       s.started = false;
 
       dropCarriedTabs(s);
-      post({ type: 'note', text: t('note.tabConnected', { port: s.bridge.port }) });
+      post({ type: 'note', text: t('note.tabConnected') });
     }
     return true;
   } catch (e) {
@@ -486,8 +473,7 @@ function loadGlobal(root) {
 function makeSpawner(s, opts) {
   const { maxTurns, protectSecrets } = opts;
   const pool = makePool({
-
-    base: portlock.subBaseFor(s.bridge ? s.bridge.port : settings().port, settings().subPortBase),
+    base: settings().subPortBase,
     max: settings().subAgents,
 
     openTab: async (port) => {
@@ -495,7 +481,7 @@ function makeSpawner(s, opts) {
       await s.bridge.openTabFor(port);
     },
     openBridge: async (port) => {
-      const b = await openBridge({ port, onLog: log, paired: true, t: (k, v) => t(k, v) });
+      const b = await openBridge({ port, onLog: log, t: (k, v) => t(k, v) });
       await b.waitForTab();
 
       const projectUrl =
@@ -546,6 +532,8 @@ function makeSpawner(s, opts) {
         allowlist: [],
 
         allowedOutside: vscode.workspace.getConfiguration().get('chatgptBridge.allowedOutside', []),
+
+        isRevoked: isRevokedAllow,
 
         readOnly: true,
 
@@ -611,30 +599,27 @@ async function handleRun(task) {
     showQueue();
     return;
   }
+
+  revokedAllows.clear();
   const { port, allowlist, denylist, maxTurns, requireRestorePoint, protectSecrets } = settings();
 
-  async function setupMcp() {
-    let mcpGot = null;
-    if (settings().mcp) {
-      try {
-        mcpGot = await mcp.connectAll(mcp.loadServers(), { log });
-        if (mcpGot.failed.length) {
-          for (const f2 of mcpGot.failed) {
-            post({ type: 'note', text: t('mcp.failed', { name: f2.name, why: f2.why }) });
-          }
+  let mcpGot = null;
+  if (settings().mcp) {
+    try {
+      mcpGot = await mcp.connectAll(mcp.loadServers(), { log });
+      if (mcpGot.failed.length) {
+        for (const f2 of mcpGot.failed) {
+          post({ type: 'note', text: t('mcp.failed', { name: f2.name, why: f2.why }) });
         }
-        if (mcpGot.tools.length) {
-          post({ type: 'note', text: t('mcp.ready', { n: mcpGot.tools.length, servers: mcpGot.clients.size }) });
-        }
-      } catch (e) {
-        log(`[mcp] 立ち上げに失敗: ${e.message}`);
-        mcpGot = null;
       }
+      if (mcpGot.tools.length) {
+        post({ type: 'note', text: t('mcp.ready', { n: mcpGot.tools.length, servers: mcpGot.clients.size }) });
+      }
+    } catch (e) {
+      log(`[mcp] 立ち上げに失敗: ${e.message}`);
+      mcpGot = null;
     }
-    return mcpGot;
   }
-
-  let mcpGot = await setupMcp();
 
   s.busy = true;
 
@@ -695,496 +680,490 @@ async function handleRun(task) {
 
     let touched = false;
 
-    async function buildTaskAttachments() {
-      let taskText = attachBangs(task, pendingBangs);
-      pendingBangs = [];
-      let mentioned = parseMentions(task);
+    let taskText = attachBangs(task, pendingBangs);
+    pendingBangs = [];
+    let mentioned = parseMentions(task);
 
-      const uploadFiles = [];
+    const uploadFiles = [];
 
-      if (mentioned.length > 0) {
-        const plan = planMentions(mentioned, (p) => {
+    if (mentioned.length > 0) {
+      const plan = planMentions(mentioned, (p) => {
+        try {
+          const full = resolveInside(s.root, p);
+          const st = fs.statSync(full);
+          if (!st.isFile()) return null;
+
+          const fd = fs.openSync(full, 'r');
+          const head = Buffer.alloc(Math.min(512, st.size));
           try {
-            const full = resolveInside(s.root, p);
-            const st = fs.statSync(full);
-            if (!st.isFile()) return null;
-
-            const fd = fs.openSync(full, 'r');
-            const head = Buffer.alloc(Math.min(512, st.size));
-            try {
-              if (head.length) fs.readSync(fd, head, 0, head.length, 0);
-            } finally {
-              fs.closeSync(fd);
-            }
-            return { size: st.size, head };
-          } catch {
-            return null;
+            if (head.length) fs.readSync(fd, head, 0, head.length, 0);
+          } finally {
+            fs.closeSync(fd);
           }
-        });
-        if (plan.upload.length) {
-          post({ type: 'note', text: t('up.sending', { list: plan.upload.join(' / ') }) });
-          for (const p of plan.upload) {
-            try {
-              uploadFiles.push({
-                name: path.basename(p),
-                mime: mimeOf(p),
-                b64: fs.readFileSync(resolveInside(s.root, p)).toString('base64'),
-              });
-            } catch (e) {
-              plan.skipped.push({ path: p, why: e.message });
-            }
+          return { size: st.size, head };
+        } catch {
+          return null;
+        }
+      });
+      if (plan.upload.length) {
+        post({ type: 'note', text: t('up.sending', { list: plan.upload.join(' / ') }) });
+        for (const p of plan.upload) {
+          try {
+            uploadFiles.push({
+              name: path.basename(p),
+              mime: mimeOf(p),
+              b64: fs.readFileSync(resolveInside(s.root, p)).toString('base64'),
+            });
+          } catch (e) {
+            plan.skipped.push({ path: p, why: e.message });
           }
         }
-        for (const sk of plan.skipped) {
-          post({ type: 'note', text: t('note.notAttached', { path: sk.path, why: sk.why }) });
-        }
-
-        mentioned = plan.text;
+      }
+      for (const sk of plan.skipped) {
+        post({ type: 'note', text: t('note.notAttached', { path: sk.path, why: sk.why }) });
       }
 
-      if (mentioned.length > 0) {
-        const tools = makeTools({
-          root: s.root,
-          allowlist,
-          denylist,
-          protectSecrets,
-          disabled: settings().disabledTools,
-        });
-
-        const readOrProblems = async (call) => {
-          if (String(call && call.path) !== PROBLEMS_MARK) return tools.read_file(call);
-          return { ok: true, output: collectProblems(s.root) };
-        };
-        const att = await buildAttachment(readOrProblems, mentioned, {
-
-          exists: (p) => {
-
-            if (p === PROBLEMS_MARK) return true;
-            try {
-              return fs.existsSync(resolveInside(s.root, p));
-            } catch {
-
-              return false;
-            }
-          },
-        });
-
-        taskText = taskText + att.text;
-        const parts = [];
-        if (att.attached.length) parts.push(t('note.attached', { list: att.attached.join(' / ') }));
-        for (const sk of att.skipped) parts.push(t('note.notAttached', { path: sk.path, why: sk.why }));
-        post({ type: 'note', text: parts.join('\n') });
-      }
-      return { taskText, uploadFiles };
+      mentioned = plan.text;
     }
 
-    const { taskText, uploadFiles } = await buildTaskAttachments();
+    if (mentioned.length > 0) {
+      const tools = makeTools({
+        root: s.root,
+        allowlist,
+        denylist,
+        protectSecrets,
+        disabled: settings().disabledTools,
 
-    const sendingInstruction = !s.started;
+        browserProfile: settings().browserProfile || '',
+        browserPath: settings().browserPath || '',
+        isRevoked: isRevokedAllow,
+      });
 
-    function buildAgentCallbacks() {
-      return {
+      const readOrProblems = async (call) => {
+        if (String(call && call.path) !== PROBLEMS_MARK) return tools.read_file(call);
+        return { ok: true, output: collectProblems(s.root) };
+      };
+      const att = await buildAttachment(readOrProblems, mentioned, {
 
-        mcp: mcpGot,
+        exists: (p) => {
 
-        mode: settings().mode,
-
-        restartGapMs: Math.max(0, Number(settings().restartGapSeconds) || 0) * 1000,
-
-        tr: (k, v) => t(k, v),
-
-        outputStyle: globalrules.loadOutputStyle(settings().outputStyle),
-
-        readOnly: settings().mode === 'plan',
-
-        planMode: settings().mode === 'plan',
-
-        readSetting: (k) => vscode.workspace.getConfiguration().get(`chatgptBridge.${k}`),
-        writeSetting: async (k, v) =>
-          vscode.workspace
-            .getConfiguration()
-            .update(`chatgptBridge.${k}`, v, vscode.ConfigurationTarget.Workspace),
-
-        onExitPlan: async () => {
-          await vscode.workspace
-            .getConfiguration()
-            .update('chatgptBridge.mode', 'edit', vscode.ConfigurationTarget.Workspace);
-          post({ type: 'note', text: t('note.planAccepted') });
-        },
-
-        disabledTools: settings().disabledTools,
-        modes: settings().modes,
-
-        startMode,
-
-        beforeTouch: (abs) => saveIfDirty(abs),
-        afterTouch: (abs) => problemsAfterTouch(abs),
-
-        respectGitIgnore: settings().respectGitIgnore,
-        preventDoneWithOpenTodos: settings().preventDoneWithOpenTodos,
-
-        onTurnsExhausted: ({ turns }) => askMoreTurns(s, turns),
-
-        onFailingStreak: ({ times, why }) => askFailingStreak(times, why),
-        onSilentStreak: ({ times, why, calledEver }) => askSilentStreak(times, why, calledEver),
-
-        onDowngrade: (info) => askDowngrade(info),
-        onTodosOpen: ({ left }) => askTodosOpen(left),
-
-        hasProjectRules: () => hasProjectRules(),
-        isInProject: () => {
+          if (p === PROBLEMS_MARK) return true;
           try {
-            const url = s.bridge ? s.bridge.tabUrl() : '';
-            const home =
-              s.projectUrl ||
-              settings().projectUrl ||
-              projectHomeOf((current && current.conversationUrl) || '');
-            return !!url && !!home && inProject(url, home);
+            return fs.existsSync(resolveInside(s.root, p));
           } catch {
+
             return false;
           }
         },
+      });
 
-        onGoalCheck: ({ summary, wrote }) => checkGoal(summary, wrote),
-
-        files: uploadFiles,
-        onUpload: (up) => {
-          if (up.uploaded && up.uploaded.length) {
-            post({ type: 'note', text: t('up.done', { list: up.uploaded.join(' / ') }) });
-          }
-
-          for (const nm of up.failed || []) {
-            post({ type: 'note', text: t('up.failed', { name: nm, why: '' }) });
-          }
-        },
-
-        onLimits: (list) => {
-
-          try {
-            if (Array.isArray(list) && list.length) remember({ type: 'limits', text: JSON.stringify(list) });
-          } catch {
-
-          }
-          const f = (list || []).find((x) => x && x.feature_name === 'file_upload');
-          if (!f || Number(f.remaining) > 0) return;
-          const min = minutesUntil(f.reset_after);
-          const when =
-            min == null
-              ? ''
-              : min < 60
-                ? t('up.backMin', { n: min })
-                : t('up.backHour', { h: Math.floor(min / 60), m: min % 60 });
-          post({ type: 'note', text: t('up.noQuota', { when }) });
-        },
-
-        hookConfig: (() => {
-          try {
-            const p = path.join(s.root, '.chatgpt-bridge', 'hooks.json');
-            if (!fs.existsSync(p)) return null;
-            const j = JSON.parse(fs.readFileSync(p, 'utf8'));
-            const n = Object.keys(j || {}).length;
-            if (n) log(`[hook] ${p} を読みました（${n} 種）`);
-            return j;
-          } catch (e) {
-
-            post({ type: 'note', text: t('hook.badConfig', { why: e.message }) });
-            return null;
-          }
-        })(),
-
-        seenUrls: (() => {
-          const set = s.seenUrls || (s.seenUrls = new Set());
-          for (const u of collectUrls(task)) set.add(u);
-          return set;
-        })(),
-
-        readSkills: (() => {
-          const conv = s.bridge ? s.bridge.conversationId() : '';
-          if (s.readSkillsConv !== conv) {
-            s.readSkillsConv = conv;
-            s.readSkills = new Set();
-          }
-          return s.readSkills;
-        })(),
-
-        onTurn: ({ turn, limit }) => {
-
-          s.gotTurns = s.gotChars || 0;
-          post({
-            type: 'turn',
-
-            label: limit ? t('state.turn', { n: turn, of: limit }) : t('state.turnOnly', { n: turn }),
-
-            startedAt: s.startedAt || null,
-
-            tools: s.toolCount || 0,
-            wrote: s.wroteFiles ? s.wroteFiles.size : 0,
-
-            got: s.gotChars || 0,
-
-            usage: (() => {
-              try {
-                const u = s.bridge && s.bridge.conversationUsage ? s.bridge.conversationUsage() : null;
-                if (!u) return null;
-                return describeUsage(
-                  u,
-                  vscode.workspace.getConfiguration().get('chatgptBridge.contextWindow', 0)
-                );
-              } catch {
-
-                return null;
-              }
-            })(),
-
-            turn,
-          });
-        },
-
-        onTodos: (todos) => {
-          post({ type: 'todos', todos });
-          remember({ type: 'todos', todos });
-        },
-        onCommandOutput: ({ id, command, chunk, started }) => {
-          post({
-            type: 'cmdout',
-            id: String(id || ''),
-            command: String(command || ''),
-            chunk: String(chunk || ''),
-
-            started: !!started,
-          });
-        },
-        bridge: s.bridge,
-        root: s.root,
-        task: taskText,
-        allowlist,
-        denylist,
-        maxTurns,
-        workspaceName: path.basename(s.root),
-        requireRestorePoint,
-        protectSecrets,
-
-        includeInstruction: sendingInstruction,
-        askPermission: askPermissionFromPanel,
-
-        allowedOutside: vscode.workspace.getConfiguration().get('chatgptBridge.allowedOutside', []),
-        allowedOutsideWrite: vscode.workspace.getConfiguration().get('chatgptBridge.allowedOutsideWrite', []),
-
-        allowedMcpServers: vscode.workspace.getConfiguration().get('chatgptBridge.allowedMcpServers', []),
-
-        allowedSites: vscode.workspace.getConfiguration().get('chatgptBridge.allowedSites', []),
-
-        openTabs: s.openTabs || null,
-        onOpenTabs: (list) => {
-          s.openTabs = list && list.length ? list : null;
-        },
-        onAllowAlways: allowAlways,
-
-        spawnAgents: makeSpawner(s, { maxTurns, protectSecrets }),
-
-        locale: localeNow(),
-
-        global: loadGlobal(s.root),
-        shouldStop: () => s.cancel,
-        onLog: (line) => {
-          log(line);
-
-          const rp = /^\[agent\] checkpoint: (.+)$/.exec(line);
-          if (rp) {
-            const sha = /^[0-9a-f]{7,40}$/.test(rp[1]) ? rp[1] : null;
-            post({
-              type: 'note',
-              text: sha ? t('note.restorePoint', { sha }) : t('note.restorePointNone'),
-            });
-          }
-        },
-
-        onNotice: (n) => {
-          const make = {
-            tooLong: () => t('note.sentAsFile', { chars: String(n.chars || '') }),
-            sameCall: () => t('note.sameCall', { n: String(n.n || '?') }),
-            delivered: () => t('note.notResending'),
-            resend: () => t('note.resendingOnce'),
-
-            policy: () => t('note.policy', { why: String(n.why || '') }),
-            restart: () => {
-
-              s.modelSlug = null;
-
-              if (!n.why) return t('note.restarted');
-              return t('note.restartedWhy', {
-                n: String(n.n || '?'),
-                max: String(n.max || '?'),
-                why: t('restartWhy.' + n.why),
-              });
-            },
-
-            doneWithoutFile: () => t('note.doneWithoutFile'),
-
-            pace: () => t('note.pacing', { sec: String(Math.ceil(Number(n.ms || 0) / 1000)) }),
-
-            waiting: () =>
-              t('note.waitingStrong', {
-                model: String(n.model || '?'),
-                when: n.hhmm ? t('downgrade.until', { hhmm: String(n.hhmm) }) : t('downgrade.unknownUntil'),
-                n: String(n.n || '?'),
-                max: String(n.max || '?'),
-              }),
-            resumed: () => t('note.resumedStrong'),
-            downgraded: () => t('note.downgradedStop', { model: String(n.model || '?') }),
-          }[n && n.kind];
-          if (!make) return;
-          const msg = { type: 'note', text: make() };
-          post(msg);
-
-          if (n.kind === 'doneWithoutFile') remember(msg);
-        },
-
-        onAnswer: (text, turn, info) => post({ type: 'answer', text, ms: (info && info.ms) || null }),
-        onNoRestorePoint: (why) => {
-          s.noRestoreWhy = why;
-          warnNoRestorePoint(s);
-        },
-        onTool: (r) => {
-
-          let diffKey = null;
-
-          if (r.ok && (r.changed || r.tool === 'run_command')) touched = true;
-          if (r.ok && r.changed) {
-            diffKey = `/${Date.now()}-${diffSeq++}/${r.changed.path}`;
-            beforeStore.set(diffKey, r.changed.before);
-            while (beforeStore.size > BEFORE_KEEP) beforeStore.delete(beforeStore.keys().next().value);
-
-            const abs = path.join(s.root, r.changed.path);
-            if (!originStore.has(abs)) originStore.set(abs, r.changed.before);
-            refreshOverlay(abs);
-          }
-          s.toolCount = (s.toolCount || 0) + 1;
-          if (r.ok && (r.tool === 'write_file' || r.tool === 'edit_file') && r.target) {
-            s.wroteFiles = s.wroteFiles || new Set();
-            s.wroteFiles.add(String(r.target));
-          }
-
-          if (r.full && r.id) {
-            fullOutputs.set(String(r.id), String(r.full));
-
-            while (fullOutputs.size > FULL_KEEP) fullOutputs.delete(fullOutputs.keys().next().value);
-          }
-          post({
-            type: 'tool',
-
-            ok: r.ok,
-
-            state: toolStateOf(r),
-            name: r.tool,
-            target: r.target || '',
-            why: r.ok ? '' : String(r.output || '').split('\n')[0],
-
-            output: clipForScreen(r.output),
-
-            fullLength: String(r.output || '').length,
-
-            fullChars: r.full ? String(r.full).length : null,
-            fullLines: r.full ? String(r.full).split('\n').length : null,
-
-            ms: r.ms || null,
-            diffKey,
-            newFile: r.changed ? !r.changed.existed : false,
-          });
-        },
-
-        onDelta: (text) => {
-
-          s.gotChars = (s.gotTurns || 0) + text.length;
-          if (text.length - shown < 400) return;
-          shown = text.length;
-          post({ type: 'delta', label, text });
-        },
-
-        onBusy: () => {
-          send('busy', { label });
-        },
-
-        onImage: (img) => {
-          post({ type: 'image', ...img });
-        },
-
-        onModel: (slug) => {
-          if (!slug || s.modelSlug === slug) return;
-          s.modelSlug = slug;
-          post({ type: 'model', text: slug });
-        },
-
-        onAutoSwitch: (m) => {
-          const seen = JSON.stringify(m);
-          if (s.lastAutoSwitch === seen) return;
-          s.lastAutoSwitch = seen;
-
-          remember({ type: 'autoswitch', ...m });
-        },
-      };
+      taskText = taskText + att.text;
+      const parts = [];
+      if (att.attached.length) parts.push(t('note.attached', { list: att.attached.join(' / ') }));
+      for (const sk of att.skipped) parts.push(t('note.notAttached', { path: sk.path, why: sk.why }));
+      post({ type: 'note', text: parts.join('\n') });
     }
 
-    const result = await runAgent(buildAgentCallbacks());
+    const sendingInstruction = !s.started;
 
-    function finishRun() {
-      s.started = true;
+    const result = await runAgent({
 
-      if (current && sendingInstruction) {
-        current.instructionSent = true;
+      mcp: mcpGot,
 
-        current.rulesFingerprint = instructionFingerprint(s);
-      }
+      mode: settings().mode,
 
-      const convUrl = s.bridge.conversationUrl();
-      const convId = s.bridge.conversationId();
-      if (current && convId) {
-        current.conversationUrl = convUrl;
-        current.conversationId = convId;
-        sessions.save(storeRoot, current);
-      }
-      log(`\nstate: ${result.status} / ターン数: ${result.turns}`);
+      thinking: settings().thinking,
 
-      if (result.status === 'asked' && result.options) {
+      restartGapMs: Math.max(0, Number(settings().restartGapSeconds) || 0) * 1000,
+
+      tr: (k, v) => t(k, v),
+
+      outputStyle: globalrules.loadOutputStyle(settings().outputStyle),
+
+      readOnly: settings().mode === 'plan',
+
+      planMode: settings().mode === 'plan',
+
+      readSetting: (k) => vscode.workspace.getConfiguration().get(`chatgptBridge.${k}`),
+      writeSetting: async (k, v) =>
+        vscode.workspace
+          .getConfiguration()
+          .update(`chatgptBridge.${k}`, v, vscode.ConfigurationTarget.Workspace),
+
+      onExitPlan: async () => {
+        await vscode.workspace
+          .getConfiguration()
+          .update('chatgptBridge.mode', 'edit', vscode.ConfigurationTarget.Workspace);
+        post({ type: 'note', text: t('note.planAccepted') });
+      },
+
+      disabledTools: settings().disabledTools,
+      modes: settings().modes,
+
+      startMode,
+
+      beforeTouch: (abs) => saveIfDirty(abs),
+      afterTouch: (abs) => problemsAfterTouch(abs),
+
+      respectGitIgnore: settings().respectGitIgnore,
+      preventDoneWithOpenTodos: settings().preventDoneWithOpenTodos,
+
+      onTurnsExhausted: ({ turns }) => askMoreTurns(s, turns),
+
+      onFailingStreak: ({ times, why }) => askFailingStreak(times, why),
+      onSilentStreak: ({ times, why, calledEver }) => askSilentStreak(times, why, calledEver),
+
+      onDowngrade: (info) => askDowngrade(info),
+      onTodosOpen: ({ left }) => askTodosOpen(left),
+
+      hasProjectRules: () => hasProjectRules(),
+      isInProject: () => {
+        try {
+          const url = s.bridge ? s.bridge.tabUrl() : '';
+          const home =
+            s.projectUrl ||
+            settings().projectUrl ||
+            projectHomeOf((current && current.conversationUrl) || '');
+          return !!url && !!home && inProject(url, home);
+        } catch {
+          return false;
+        }
+      },
+
+      onGoalCheck: ({ summary, wrote }) => checkGoal(summary, wrote),
+
+      files: uploadFiles,
+      onUpload: (up) => {
+        if (up.uploaded && up.uploaded.length) {
+          post({ type: 'note', text: t('up.done', { list: up.uploaded.join(' / ') }) });
+        }
+
+        for (const nm of up.failed || []) {
+          post({ type: 'note', text: t('up.failed', { name: nm, why: '' }) });
+        }
+      },
+
+      onLimits: (list) => {
+
+        try {
+          if (Array.isArray(list) && list.length) remember({ type: 'limits', text: JSON.stringify(list) });
+        } catch {
+
+        }
+        const f = (list || []).find((x) => x && x.feature_name === 'file_upload');
+        if (!f || Number(f.remaining) > 0) return;
+        const min = minutesUntil(f.reset_after);
+        const when =
+          min == null
+            ? ''
+            : min < 60
+              ? t('up.backMin', { n: min })
+              : t('up.backHour', { h: Math.floor(min / 60), m: min % 60 });
+        post({ type: 'note', text: t('up.noQuota', { when }) });
+      },
+
+      hookConfig: (() => {
+        try {
+          const p = path.join(s.root, '.chatgpt-bridge', 'hooks.json');
+          if (!fs.existsSync(p)) return null;
+          const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+          const n = Object.keys(j || {}).length;
+          if (n) log(`[hook] ${p} を読みました（${n} 種）`);
+          return j;
+        } catch (e) {
+
+          post({ type: 'note', text: t('hook.badConfig', { why: e.message }) });
+          return null;
+        }
+      })(),
+
+      seenUrls: (() => {
+        const set = s.seenUrls || (s.seenUrls = new Set());
+        for (const u of collectUrls(task)) set.add(u);
+        return set;
+      })(),
+
+      readSkills: (() => {
+        const conv = s.bridge ? s.bridge.conversationId() : '';
+        if (s.readSkillsConv !== conv) {
+          s.readSkillsConv = conv;
+          s.readSkills = new Set();
+        }
+        return s.readSkills;
+      })(),
+
+      onTurn: ({ turn, limit }) => {
+
+        s.gotTurns = s.gotChars || 0;
         post({
-          type: 'ask',
-          text: result.question,
-          kind: 'choice',
-          actions: result.options.map((o) => ({
-            label: o.label,
-            action: 'choice',
-            answer: o.label,
+          type: 'turn',
 
-            note: o.description,
-          })),
+          label: limit ? t('state.turn', { n: turn, of: limit }) : t('state.turnOnly', { n: turn }),
+
+          startedAt: s.startedAt || null,
+
+          tools: s.toolCount || 0,
+          wrote: s.wroteFiles ? s.wroteFiles.size : 0,
+
+          got: s.gotChars || 0,
+
+          usage: (() => {
+            try {
+              const u = s.bridge && s.bridge.conversationUsage ? s.bridge.conversationUsage() : null;
+              if (!u) return null;
+              return describeUsage(
+                u,
+                vscode.workspace.getConfiguration().get('chatgptBridge.contextWindow', 0)
+              );
+            } catch {
+
+              return null;
+            }
+          })(),
+
+          turn,
         });
-      }
+      },
 
-      notifyIdle(
-        result.status === 'asked'
-          ? t('notify.asked', { name: path.basename(s.root) })
-          : t('notify.done', { name: path.basename(s.root) }),
+      onTodos: (todos) => {
+        post({ type: 'todos', todos });
+        remember({ type: 'todos', todos });
+      },
+      onCommandOutput: ({ id, command, chunk, started }) => {
+        post({
+          type: 'cmdout',
+          id: String(id || ''),
+          command: String(command || ''),
+          chunk: String(chunk || ''),
 
-        { needsYou: result.status === 'asked' }
-      );
+          started: !!started,
+        });
+      },
+      bridge: s.bridge,
+      root: s.root,
+      task: taskText,
+      allowlist,
+      denylist,
+      maxTurns,
+      workspaceName: path.basename(s.root),
+      requireRestorePoint,
+      protectSecrets,
+
+      includeInstruction: sendingInstruction,
+      askPermission: askPermissionFromPanel,
+
+      allowedOutside: vscode.workspace.getConfiguration().get('chatgptBridge.allowedOutside', []),
+      allowedOutsideWrite: vscode.workspace.getConfiguration().get('chatgptBridge.allowedOutsideWrite', []),
+
+      allowedMcpServers: vscode.workspace.getConfiguration().get('chatgptBridge.allowedMcpServers', []),
+
+      allowedSites: vscode.workspace.getConfiguration().get('chatgptBridge.allowedSites', []),
+
+      openTabs: s.openTabs || null,
+      onOpenTabs: (list) => {
+        s.openTabs = list && list.length ? list : null;
+      },
+      onAllowAlways: allowAlways,
+
+      isRevoked: isRevokedAllow,
+
+      spawnAgents: makeSpawner(s, { maxTurns, protectSecrets }),
+
+      locale: localeNow(),
+
+      global: loadGlobal(s.root),
+      shouldStop: () => s.cancel,
+      onLog: (line) => {
+        log(line);
+
+        const rp = /^\[agent\] checkpoint: (.+)$/.exec(line);
+        if (rp) {
+          const sha = /^[0-9a-f]{7,40}$/.test(rp[1]) ? rp[1] : null;
+          post({
+            type: 'note',
+            text: sha ? t('note.restorePoint', { sha }) : t('note.restorePointNone'),
+          });
+        }
+      },
+
+      onNotice: (n) => {
+        const make = {
+          tooLong: () => t('note.sentAsFile', { chars: String(n.chars || '') }),
+          sameCall: () => t('note.sameCall', { n: String(n.n || '?') }),
+          delivered: () => t('note.notResending'),
+          resend: () => t('note.resendingOnce'),
+
+          policy: () => t('note.policy', { why: String(n.why || '') }),
+          restart: () => {
+
+            s.modelSlug = null;
+
+            if (!n.why) return t('note.restarted');
+            return t('note.restartedWhy', {
+              n: String(n.n || '?'),
+              max: String(n.max || '?'),
+              why: t('restartWhy.' + n.why),
+            });
+          },
+
+          doneWithoutFile: () => t('note.doneWithoutFile'),
+
+          pace: () => t('note.pacing', { sec: String(Math.ceil(Number(n.ms || 0) / 1000)) }),
+
+          waiting: () =>
+            t('note.waitingStrong', {
+              model: String(n.model || '?'),
+              when: n.hhmm ? t('downgrade.until', { hhmm: String(n.hhmm) }) : t('downgrade.unknownUntil'),
+              n: String(n.n || '?'),
+              max: String(n.max || '?'),
+            }),
+          resumed: () => t('note.resumedStrong'),
+          downgraded: () => t('note.downgradedStop', { model: String(n.model || '?') }),
+        }[n && n.kind];
+        if (!make) return;
+        const msg = { type: 'note', text: make() };
+        post(msg);
+
+        if (n.kind === 'doneWithoutFile') remember(msg);
+      },
+
+      onAnswer: (text, turn, info) => post({ type: 'answer', text, ms: (info && info.ms) || null }),
+      onNoRestorePoint: (why) => {
+        s.noRestoreWhy = why;
+        warnNoRestorePoint(s);
+      },
+      onTool: (r) => {
+
+        let diffKey = null;
+
+        if (r.ok && (r.changed || r.tool === 'run_command')) touched = true;
+        if (r.ok && r.changed) {
+          diffKey = `/${Date.now()}-${diffSeq++}/${r.changed.path}`;
+          beforeStore.set(diffKey, r.changed.before);
+
+          const abs = path.join(s.root, r.changed.path);
+          if (!originStore.has(abs)) originStore.set(abs, r.changed.before);
+          refreshOverlay(abs);
+        }
+        s.toolCount = (s.toolCount || 0) + 1;
+        if (r.ok && (r.tool === 'write_file' || r.tool === 'edit_file') && r.target) {
+          s.wroteFiles = s.wroteFiles || new Set();
+          s.wroteFiles.add(String(r.target));
+        }
+
+        if (r.full && r.id) {
+          fullOutputs.set(String(r.id), String(r.full));
+
+          while (fullOutputs.size > FULL_KEEP) fullOutputs.delete(fullOutputs.keys().next().value);
+        }
+        post({
+          type: 'tool',
+
+          ok: r.ok,
+
+          state: toolStateOf(r),
+          name: r.tool,
+          target: r.target || '',
+          why: r.ok ? '' : String(r.output || '').split('\n')[0],
+
+          output: clipForScreen(r.output),
+
+          fullLength: String(r.output || '').length,
+
+          fullChars: r.full ? String(r.full).length : null,
+          fullLines: r.full ? String(r.full).split('\n').length : null,
+
+          ms: r.ms || null,
+          diffKey,
+          newFile: r.changed ? !r.changed.existed : false,
+        });
+      },
+
+      onDelta: (text) => {
+
+        s.gotChars = (s.gotTurns || 0) + text.length;
+        if (text.length - shown < 400) return;
+        shown = text.length;
+        post({ type: 'delta', label, text });
+      },
+
+      onBusy: () => {
+        send('busy', { label });
+      },
+
+      onImage: (img) => {
+        post({ type: 'image', ...img });
+      },
+
+      onModel: (slug) => {
+        if (!slug || s.modelSlug === slug) return;
+        s.modelSlug = slug;
+        post({ type: 'model', text: slug });
+      },
+
+      onAutoSwitch: (m) => {
+        const seen = JSON.stringify(m);
+        if (s.lastAutoSwitch === seen) return;
+        s.lastAutoSwitch = seen;
+
+        remember({ type: 'autoswitch', ...m });
+      },
+    });
+
+    s.started = true;
+
+    if (current && sendingInstruction) {
+      current.instructionSent = true;
+
+      current.rulesFingerprint = instructionFingerprint(s);
+    }
+
+    const convUrl = s.bridge.conversationUrl();
+    const convId = s.bridge.conversationId();
+    if (current && convId) {
+      current.conversationUrl = convUrl;
+      current.conversationId = convId;
+      sessions.save(storeRoot, current);
+    }
+    log(`\nstate: ${result.status} / ターン数: ${result.turns}`);
+
+    if (result.status === 'asked' && result.options) {
       post({
-        type: 'result',
-        status: result.status,
-        turns: result.turns,
+        type: 'ask',
+        text: result.question,
+        kind: 'choice',
+        actions: result.options.map((o) => ({
+          label: o.label,
+          action: 'choice',
+          answer: o.label,
 
-        tools: s.toolCount || 0,
-        wrote: s.wroteFiles ? s.wroteFiles.size : 0,
-        ms: s.startedAt ? Date.now() - s.startedAt : 0,
-        detail: resultDetail(result),
-
-        sha:
-          result.startSha && checkpoint.changedSince(s.root, result.startSha)
-            ? result.startSha.slice(0, 8)
-            : null,
+          note: o.description,
+        })),
       });
     }
 
-    finishRun();
+    notifyIdle(
+      result.status === 'asked'
+        ? t('notify.asked', { name: path.basename(s.root) })
+        : t('notify.done', { name: path.basename(s.root) }),
+
+      { needsYou: result.status === 'asked' }
+    );
+    post({
+      type: 'result',
+      status: result.status,
+      turns: result.turns,
+
+      tools: s.toolCount || 0,
+      wrote: s.wroteFiles ? s.wroteFiles.size : 0,
+      ms: s.startedAt ? Date.now() - s.startedAt : 0,
+      detail: resultDetail(result),
+
+      sha:
+        result.startSha && checkpoint.changedSince(s.root, result.startSha)
+          ? result.startSha.slice(0, 8)
+          : null,
+    });
   } catch (e) {
     log(`[失敗] ${e.message}`);
     post({ type: 'error', text: e.message });
@@ -2546,6 +2525,14 @@ const fromWebview = {
     return { mode: want };
   },
 
+  async thinking({ on } = {}) {
+    if (typeof on !== 'boolean') return { on: settings().thinking };
+    await vscode.workspace
+      .getConfiguration('chatgptBridge')
+      .update('thinking', on, vscode.ConfigurationTarget.Global);
+    return { on };
+  },
+
   async choice({ answer }) {
     const text = String(answer || '').trim();
     if (!text) return { started: false, why: t('ask.cantStart') };
@@ -2755,7 +2742,7 @@ function wirePanel(webviewView) {
       const reply = (data) => {
         if (replied || !m || !m.id) return;
         replied = true;
-        sendTo(webviewView, m.type, data, m.id);
+        send(m.type, data, m.id);
       };
 
       const type = m && m.type;
@@ -2875,7 +2862,7 @@ const uriHandler = {
 
 let pendingCommand = null;
 
-function askPermissionFromPanel({ kind, detail, always, whyKey }) {
+function askPermissionFromPanel({ kind, detail, always }) {
   return new Promise((resolve) => {
 
     if (pendingCommand) pendingCommand.resolve('no');
@@ -2922,7 +2909,7 @@ function askPermissionFromPanel({ kind, detail, always, whyKey }) {
       ),
 
       kind,
-      detail: whyKey ? `${detail}\n（${t(whyKey)}）` : detail,
+      detail,
       actions: [
         { label: t('action.runOnce'), action: 'askrun', answer: 'once' },
 
@@ -2937,9 +2924,7 @@ function askPermissionFromPanel({ kind, detail, always, whyKey }) {
                       ? t('action.allowServer', { server: always })
                       : isBrowser
                         ? t('action.allowSite', { site: always })
-                        : Array.isArray(always)
-                          ? t('action.allowPrograms', { progs: always.join(', ') })
-                          : t('action.allowProgram', { prog: always }),
+                        : t('action.allowProgram', { prog: always }),
                 action: 'askrun',
                 answer: 'always',
               },
@@ -2949,6 +2934,12 @@ function askPermissionFromPanel({ kind, detail, always, whyKey }) {
       ],
     });
   });
+}
+
+const revokedAllows = new Set();
+const revokeKey = (kind, detail) => `${kind}\n${String(detail)}`;
+function isRevokedAllow({ kind, detail }) {
+  return revokedAllows.has(revokeKey(kind, detail));
 }
 
 function dirLabel(abs) {
@@ -3370,31 +3361,6 @@ async function disconnectTab() {
   post({ type: 'note', text: ok ? t('conn.cut') : t('conn.cutFailed') });
 }
 
-async function pairTab() {
-  const s = ensureSession();
-  if (!s) return;
-
-  try {
-    await store.update(PAIRED_KEY, true);
-  } catch {
-
-  }
-
-  if (!(await ensureBridge(s, settings().port, { waitTab: false }))) return;
-
-  const url = s.bridge.pairUrl();
-  let opened = false;
-  try {
-    opened = await vscode.env.openExternal(vscode.Uri.parse(url));
-  } catch {
-    opened = false;
-  }
-  post({
-    type: 'note',
-    text: opened ? t('pair.opened', { port: s.bridge.port }) : t('pair.failed', { url }),
-  });
-}
-
 async function reconnectTab() {
   if (!session || !session.bridge) {
     post({ type: 'note', text: t('conn.none') });
@@ -3478,12 +3444,13 @@ async function toggleFocusView() {
 
 async function forgetAllowed() {
   const c = vscode.workspace.getConfiguration();
+
   const groups = [
-    { key: 'chatgptBridge.allowlist', kindLabel: t('forget.kindCommand') },
-    { key: 'chatgptBridge.allowedOutside', kindLabel: t('forget.kindRead') },
-    { key: 'chatgptBridge.allowedOutsideWrite', kindLabel: t('forget.kindWrite') },
-    { key: 'chatgptBridge.allowedMcpServers', kindLabel: t('forget.kindMcp') },
-    { key: 'chatgptBridge.allowedSites', kindLabel: t('forget.kindSite') },
+    { key: 'chatgptBridge.allowlist', kind: 'command', kindLabel: t('forget.kindCommand') },
+    { key: 'chatgptBridge.allowedOutside', kind: 'path', kindLabel: t('forget.kindRead') },
+    { key: 'chatgptBridge.allowedOutsideWrite', kind: 'pathWrite', kindLabel: t('forget.kindWrite') },
+    { key: 'chatgptBridge.allowedMcpServers', kind: 'mcp', kindLabel: t('forget.kindMcp') },
+    { key: 'chatgptBridge.allowedSites', kind: 'browser', kindLabel: t('forget.kindSite') },
   ];
   const items = [];
   for (const b of groups) {
@@ -3506,11 +3473,18 @@ async function forgetAllowed() {
     const rest = c.get(b.key, []).filter((v) => !drop.includes(String(v)));
 
     await c.update(b.key, rest, vscode.ConfigurationTarget.Workspace);
+
+    for (const v of drop) revokedAllows.add(revokeKey(b.kind, v));
   }
   post({ type: 'note', text: t('note.forgotAllowed', { n: String(picked.length) }) });
 }
 
 async function allowAlways({ kind, detail }) {
+
+  revokedAllows.delete(revokeKey(kind, detail));
+  if (kind === 'path' || kind === 'pathWrite') {
+    revokedAllows.delete(revokeKey(kind, dirLabel(detail)));
+  }
   if (kind === 'path' || kind === 'pathWrite') {
     const c = vscode.workspace.getConfiguration();
 
@@ -3549,11 +3523,9 @@ async function allowAlways({ kind, detail }) {
 async function allowAlwaysCommand(cmd) {
   const c = vscode.workspace.getConfiguration();
   const now = c.get('chatgptBridge.allowlist', []);
-
-  const add = (Array.isArray(cmd) ? cmd : [cmd]).filter((x, i, a) => !now.includes(x) && a.indexOf(x) === i);
-  if (!add.length) return;
-  await c.update('chatgptBridge.allowlist', now.concat(add), vscode.ConfigurationTarget.Workspace);
-  post({ type: 'note', text: t('note.allowedAlways', { cmd: add.join(', ') }) });
+  if (now.includes(cmd)) return;
+  await c.update('chatgptBridge.allowlist', now.concat([cmd]), vscode.ConfigurationTarget.Workspace);
+  post({ type: 'note', text: t('note.allowedAlways', { cmd }) });
 }
 
 function activate(context) {
@@ -3714,7 +3686,6 @@ function activate(context) {
     vscode.commands.registerCommand('chatgptBridge.importChat', importChat),
     vscode.commands.registerCommand('chatgptBridge.disconnectTab', disconnectTab),
     vscode.commands.registerCommand('chatgptBridge.reconnectTab', reconnectTab),
-    vscode.commands.registerCommand('chatgptBridge.pairTab', pairTab),
 
     vscode.commands.registerCommand('chatgptBridge.openChromeExtension', () =>
       vscode.env.openExternal(vscode.Uri.file(path.join(__dirname, 'chrome-extension')))

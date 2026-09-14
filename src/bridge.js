@@ -18,7 +18,7 @@ const RECONNECT_WAIT_MS = 30000;
 
 const RELOAD_WAIT_MS = 15000;
 
-const EXPECTED_TAB_PROTOCOL = 59;
+const EXPECTED_TAB_PROTOCOL = 60;
 
 const portlock = require('./portlock');
 
@@ -55,6 +55,10 @@ const JA_FALLBACK = {
     `ChatGPT のタブは、別の窓の枠 ${port} につながっています。`,
   'br.tabElsewhereHow': () =>
     'その窓へ譲るよう頼みましたが、返事がありませんでした。その窓で /exit するか、窓を閉じてください。',
+
+  'br.nobodyHolds': ({ port }) =>
+    'どの窓もこのタブを握っていません（前の走りが指した枠を覚えたままです）。\n' +
+    `chatgpt.com を新しいタブで開くか、https://chatgpt.com/?bridge_port=${port} を開いてください（読み込み直しでは直りません）。`,
   'br.oldTab': ({ tab, here }) =>
     `ブラウザの拡張機能が古いままです（タブ側 ${tab} / こちら ${here}）。\nブラウザを閉じて開き直してください。`,
   'br.oldTabHow': () =>
@@ -117,23 +121,20 @@ function openBridge({
   onLog = () => {},
   onConversationChange = () => {},
 
+  onThinkingState = () => {},
+
   t: tIn = null,
 
   workspace = '',
-
-  paired = false,
-  WebSocketServerImpl = WebSocketServer,
 } = {}) {
   const t = (k, v) => (tIn ? tIn(k, v) : JA_FALLBACK[k](v || {}));
-
-  const isPaired = () => (typeof paired === 'function' ? !!paired() : !!paired);
   return new Promise((resolve, reject) => {
     let server;
 
     let openedPort = port;
     const roam = port === portlock.PORT_FROM;
     try {
-      server = new WebSocketServerImpl({ host: '127.0.0.1', port });
+      server = new WebSocketServer({ host: '127.0.0.1', port });
     } catch (e) {
       reject(new Error(t('br.portOpen', { port, why: e.message })));
       return;
@@ -192,7 +193,7 @@ function openBridge({
             } catch {
 
             }
-            server = new WebSocketServerImpl({ host: '127.0.0.1', port: openedPort });
+            server = new WebSocketServer({ host: '127.0.0.1', port: openedPort });
             wireServer();
             return;
           }
@@ -220,6 +221,18 @@ function openBridge({
           }
 
           if (m.type === 'hello') {
+
+            if (m.thinking && typeof m.thinking === 'object') {
+              try {
+                onThinkingState({
+                  present: !!m.thinking.present,
+                  usable: !!m.thinking.usable,
+                  on: !!m.thinking.on,
+                });
+              } catch {
+
+              }
+            }
             const id = typeof m.tabId === 'string' && m.tabId ? m.tabId : null;
 
             const who = id || '(名札なし)';
@@ -229,6 +242,13 @@ function openBridge({
               if (targetId !== who) onLog(`[bridge:${port}] 送り先のタブ: ${who}`);
               targetId = who;
               sock = ws;
+
+              try {
+
+                portlock.markTab(openedPort, true);
+              } catch {
+
+              }
 
               generation += 1;
               tabProtocol = m.protocol || 0;
@@ -352,6 +372,18 @@ function openBridge({
             onLog(`[bridge:${port}] 場所が変わりました: ${lastUrl}（吹き出し ${lastTurns}）`);
 
             if (afterId !== beforeId) onConversationChange(afterId, lastUrl, lastTitle, beforeId);
+
+            if (m.thinking && typeof m.thinking === 'object') {
+              try {
+                onThinkingState({
+                  present: !!m.thinking.present,
+                  usable: !!m.thinking.usable,
+                  on: !!m.thinking.on,
+                });
+              } catch {
+
+              }
+            }
             return;
           }
 
@@ -515,6 +547,11 @@ function openBridge({
 
           if (sock !== ws) return;
           sock = null;
+          try {
+            portlock.markTab(openedPort, false);
+          } catch {
+
+          }
           if (waiting) {
             const w = waiting;
             waiting = null;
@@ -540,8 +577,6 @@ function openBridge({
     let claimTimer = null;
     function pollClaim() {
       if (closed) return;
-
-      if (isPaired()) return;
       let c = null;
       try {
         c = portlock.readClaim();
@@ -580,6 +615,11 @@ function openBridge({
       targetId = null;
       tabProtocol = 0;
       try {
+        portlock.markTab(openedPort, false);
+      } catch {
+
+      }
+      try {
         going.close();
       } catch {
 
@@ -590,9 +630,7 @@ function openBridge({
 
     function liveOthers() {
       try {
-        return portlock
-          .listLocks()
-          .filter((l) => l.port !== openedPort && portlock.slotIndexOf(l.port) >= 0);
+        return portlock.listLocks().filter((l) => l.port !== openedPort);
       } catch {
         return [];
       }
@@ -609,10 +647,12 @@ function openBridge({
     function noTabWhy() {
       const others = liveOthers();
       if (!others.length) return t('br.noTab');
-      const who = others[0];
+
+      const holder = others.find((o) => o.hasTab);
+      if (!holder) return t('br.noTab') + '\n' + t('br.nobodyHolds', { port: openedPort });
       return (
-        t('br.tabElsewhere', { port: who.port }) +
-        (who.workspace ? '\n' + t('br.heldWhere', { where: who.workspace }) : '') +
+        t('br.tabElsewhere', { port: holder.port }) +
+        (holder.workspace ? '\n' + t('br.heldWhere', { where: holder.workspace }) : '') +
         '\n' +
         t('br.tabElsewhereHow')
       );
@@ -633,8 +673,6 @@ function openBridge({
 
         const askTimer = setTimeout(() => {
           if (sock && tabProtocol) return;
-
-          if (isPaired()) return;
           const others = liveOthers();
           if (!others.length) return;
           onLog(
@@ -710,6 +748,8 @@ function openBridge({
         onLimits = () => {},
 
         asFile = false,
+
+        thinking = undefined,
 
         body = '',
       } = {}
@@ -845,6 +885,8 @@ function openBridge({
             asFile: !!asFile,
 
             ...(asFile && body ? { body: String(body) } : {}),
+
+            ...(typeof thinking === 'boolean' ? { thinking } : {}),
           })
         );
       });
@@ -1197,8 +1239,6 @@ function openBridge({
       createProject,
       openTabFor,
       retireTab,
-
-      pairUrl: () => 'https://chatgpt.com/?bridge_port=' + openedPort,
 
       reloadTab,
       limits: () => lastLimits,
