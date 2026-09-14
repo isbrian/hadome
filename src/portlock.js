@@ -8,9 +8,26 @@ const LOCK_DIR = process.env.CHATGPT_BRIDGE_PORTS_DIR
   : path.join(os.homedir(), '.chatgpt-bridge', 'ports');
 
 const PORT_FROM = 8765;
-const PORT_TO = PORT_FROM;
+const PORT_TO = 8775;
 
 const RESERVED = new Set([8767, 8768, 8769]);
+
+const SUB_BLOCK = 8;
+
+function mainPorts() {
+  const out = [];
+  for (let p = PORT_FROM; p <= PORT_TO; p += 1) if (!RESERVED.has(p)) out.push(p);
+  return out;
+}
+
+function slotIndexOf(port) {
+  return mainPorts().indexOf(Number(port));
+}
+
+function subBaseFor(port, subPortBase) {
+  const at = slotIndexOf(port);
+  return at < 0 ? subPortBase : subPortBase + at * SUB_BLOCK;
+}
 
 function lockPath(port) {
   return path.join(LOCK_DIR, `${port}.json`);
@@ -163,6 +180,10 @@ module.exports = {
   PORT_FROM,
   PORT_TO,
   RESERVED,
+  SUB_BLOCK,
+  mainPorts,
+  slotIndexOf,
+  subBaseFor,
   lockPath,
   holderOf,
   readLock,

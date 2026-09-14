@@ -9,6 +9,7 @@ const { describeUsage } = require('./src/usage');
 const os = require('os');
 const fs = require('fs');
 const { openBridge } = require('./src/bridge');
+const portlock = require('./src/portlock');
 
 const { projectInstructions } = require('./src/projectrules');
 const { runAgent, toolStateOf } = require('./src/agent');
@@ -354,9 +355,20 @@ function projectHomeOf(url) {
   return m ? `${m[1]}/project` : '';
 }
 
-async function ensureBridge(s, port) {
+const PAIRED_KEY = 'chatgptBridge.pairedTab';
+
+function pairedFor() {
+  try {
+    if (store && store.get(PAIRED_KEY, false)) return true;
+  } catch {
+
+  }
+
+  return settings().port !== portlock.PORT_FROM;
+}
+
+async function ensureBridge(s, port, { waitTab = true } = {}) {
   if (s.bridge) return true;
-  post({ type: 'note', text: t('note.waitingTab') });
   try {
     s.bridge = await openBridge({
       port,
@@ -364,11 +376,17 @@ async function ensureBridge(s, port) {
 
       workspace: pickWorkspace() || '',
 
+      paired: pairedFor,
+
       t: (k, v) => t(k, v),
 
       onConversationChange: (id, url, title, fromId) =>
         handleConversationChange(s, id, url, fromId),
     });
+
+    if (!waitTab) return true;
+
+    post({ type: 'note', text: t('note.waitingTab', { port: s.bridge.port }) });
 
     await s.bridge.waitForTab();
 
@@ -391,13 +409,13 @@ async function ensureBridge(s, port) {
       s.started = true;
 
       log(`[bridge] 続きとみなしました（決まりの指紋 ${rulesNow}）`);
-      post({ type: 'note', text: t('note.tabResumed') });
+      post({ type: 'note', text: t('note.tabResumed', { port: s.bridge.port }) });
     } else {
 
       s.started = false;
 
       dropCarriedTabs(s);
-      post({ type: 'note', text: t('note.tabConnected') });
+      post({ type: 'note', text: t('note.tabConnected', { port: s.bridge.port }) });
     }
     return true;
   } catch (e) {
@@ -468,7 +486,8 @@ function loadGlobal(root) {
 function makeSpawner(s, opts) {
   const { maxTurns, protectSecrets } = opts;
   const pool = makePool({
-    base: settings().subPortBase,
+
+    base: portlock.subBaseFor(s.bridge ? s.bridge.port : settings().port, settings().subPortBase),
     max: settings().subAgents,
 
     openTab: async (port) => {
@@ -476,7 +495,7 @@ function makeSpawner(s, opts) {
       await s.bridge.openTabFor(port);
     },
     openBridge: async (port) => {
-      const b = await openBridge({ port, onLog: log, t: (k, v) => t(k, v) });
+      const b = await openBridge({ port, onLog: log, paired: true, t: (k, v) => t(k, v) });
       await b.waitForTab();
 
       const projectUrl =
@@ -3351,6 +3370,31 @@ async function disconnectTab() {
   post({ type: 'note', text: ok ? t('conn.cut') : t('conn.cutFailed') });
 }
 
+async function pairTab() {
+  const s = ensureSession();
+  if (!s) return;
+
+  try {
+    await store.update(PAIRED_KEY, true);
+  } catch {
+
+  }
+
+  if (!(await ensureBridge(s, settings().port, { waitTab: false }))) return;
+
+  const url = s.bridge.pairUrl();
+  let opened = false;
+  try {
+    opened = await vscode.env.openExternal(vscode.Uri.parse(url));
+  } catch {
+    opened = false;
+  }
+  post({
+    type: 'note',
+    text: opened ? t('pair.opened', { port: s.bridge.port }) : t('pair.failed', { url }),
+  });
+}
+
 async function reconnectTab() {
   if (!session || !session.bridge) {
     post({ type: 'note', text: t('conn.none') });
@@ -3670,6 +3714,7 @@ function activate(context) {
     vscode.commands.registerCommand('chatgptBridge.importChat', importChat),
     vscode.commands.registerCommand('chatgptBridge.disconnectTab', disconnectTab),
     vscode.commands.registerCommand('chatgptBridge.reconnectTab', reconnectTab),
+    vscode.commands.registerCommand('chatgptBridge.pairTab', pairTab),
 
     vscode.commands.registerCommand('chatgptBridge.openChromeExtension', () =>
       vscode.env.openExternal(vscode.Uri.file(path.join(__dirname, 'chrome-extension')))

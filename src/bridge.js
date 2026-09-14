@@ -120,9 +120,13 @@ function openBridge({
   t: tIn = null,
 
   workspace = '',
+
+  paired = false,
   WebSocketServerImpl = WebSocketServer,
 } = {}) {
   const t = (k, v) => (tIn ? tIn(k, v) : JA_FALLBACK[k](v || {}));
+
+  const isPaired = () => (typeof paired === 'function' ? !!paired() : !!paired);
   return new Promise((resolve, reject) => {
     let server;
 
@@ -536,6 +540,8 @@ function openBridge({
     let claimTimer = null;
     function pollClaim() {
       if (closed) return;
+
+      if (isPaired()) return;
       let c = null;
       try {
         c = portlock.readClaim();
@@ -584,7 +590,9 @@ function openBridge({
 
     function liveOthers() {
       try {
-        return portlock.listLocks().filter((l) => l.port !== openedPort);
+        return portlock
+          .listLocks()
+          .filter((l) => l.port !== openedPort && portlock.slotIndexOf(l.port) >= 0);
       } catch {
         return [];
       }
@@ -625,6 +633,8 @@ function openBridge({
 
         const askTimer = setTimeout(() => {
           if (sock && tabProtocol) return;
+
+          if (isPaired()) return;
           const others = liveOthers();
           if (!others.length) return;
           onLog(
@@ -1187,6 +1197,8 @@ function openBridge({
       createProject,
       openTabFor,
       retireTab,
+
+      pairUrl: () => 'https://chatgpt.com/?bridge_port=' + openedPort,
 
       reloadTab,
       limits: () => lastLimits,

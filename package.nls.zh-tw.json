@@ -82,6 +82,7 @@
   "command.deleteAllSessions.title": "刪除已儲存的對話…",
   "command.disconnectTab.title": "中斷與目標分頁的連線",
   "command.reconnectTab.title": "重新連上目標分頁",
+  "command.pairTab.title": "開一個與本視窗配對的分頁",
   "command.importChat.title": "匯入對話…",
   "config.projectUrl.description": "開新對話的位置。指向 ChatGPT 的「專案」時，該專案的指令就會生效（例：https://chatgpt.com/g/g-p-xxxx/project）。留空則使用一般的 chatgpt.com。",
   "command.writeProjectInstructions.title": "把橋接的規則寫進專案指令…",
