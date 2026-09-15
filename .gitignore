@@ -10,4 +10,20 @@ webview/dist/
 prior-art/
 
 .DS_Store
-.vscode/settings.json
+.vscode/
+
+.vv/
+
+# 開發側路徑一律不進版控（原本已追蹤的 41 檔以 git rm --cached 解除，檔案仍留在工作樹）
+.claude/
+.github/
+.orchestration/
+_claude/
+CLAUDE.md
+docs/
+openspec/
+report/
+reports/
+skills/
+test/
+todo/
