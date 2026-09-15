@@ -334,6 +334,10 @@ async function runAgentBody({
   onOpenTabs = null,
 
   onAllowAlways = null,
+
+  isRevoked = null,
+
+  thinking = undefined,
 }, onTools) {
 
   const 背景の走り = [];
@@ -387,6 +391,7 @@ async function runAgentBody({
     readOnly,
     askPermission,
     onAllowAlways,
+    isRevoked,
     allowedOutside,
     allowedOutsideWrite,
     allowedMcpServers,
@@ -814,6 +819,8 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
     const t0 = Date.now();
 
     const askOpts = {};
+
+    if (typeof thinking === 'boolean') askOpts.thinking = thinking;
     if (onDelta) askOpts.onDelta = onDelta;
     if (onBusy) askOpts.onBusy = onBusy;
     if (onImage) askOpts.onImage = onImage;

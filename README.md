@@ -57,11 +57,27 @@ in code: before touching a debugging port it reads which process holds it and re
 unless that process is on the isolated profile. Pages open as background tabs, and stay
 open until the work is done.
 
+<p align="center">
+  <img src="media/browser-en.png" width="420"
+       alt="The panel showing what browser_read returned: an accessibility tree with a text box, a dropdown and its options, a checked checkbox and a button — then browser_set putting a value into the dropdown.">
+  <br>
+  <sub>*It reads the accessibility tree, not a screenshot — so a dropdown is a dropdown, and what is selected is visible.*</sub>
+</p>
+
+
 **Permission is layered, not a single switch.** Four modes (`ask` / `edit` / `plan` /
 `never`), your own named modes with their own tool sets, an allowlist and a denylist for
 commands, separate read and write permission for folders outside the workspace,
 per-server MCP approval, per-origin browser approval — and everything you grant with
 "always allow" can be taken back one item at a time. See [Safety](#safety).
+
+<p align="center">
+  <img src="media/brakes-en.png" width="420"
+       alt="The panel showing three refused tool calls — a credential file, a protected path, a file outside the workspace — and a command waiting for permission.">
+  <br>
+  <sub>*Three refusals and one question, in a single turn.*</sub>
+</p>
+
 
 **It can run your own checks.** Put a `.chatgpt-bridge/hooks.json` in the workspace and
 your commands run before and after each tool call.
@@ -72,11 +88,9 @@ your commands run before and after each tool call.
 
 ## Requirements
 
-| | |
-|---|---|
-| Editor | VSCodium or VS Code 1.96+ |
-| Node | 20 or newer |
-| Browser | A Chromium-based browser with a ChatGPT session you are signed in to |
+- **Editor** — VSCodium or VS Code 1.96+
+- **Node** — 20 or newer
+- **Browser** — A Chromium-based browser with a ChatGPT session you are signed in to
 
 ## Install
 
@@ -91,26 +105,6 @@ find each other over `ws://127.0.0.1:8765`.
    **Load unpacked**, and select the unzipped folder.
 5. Open a ChatGPT tab and sign in.
 6. In the editor, open the **ChatGPT Bridge** panel. It should say the tab is connected.
-
-
-## More than one window
-
-Up to eight editor windows can run at once, each with a ChatGPT tab of its own.
-
-In each extra window, run **Open a Tab Paired with This Window** from the command
-palette. The window takes a free port (`8765`–`8775`, skipping `8767`–`8769`) and opens
-a tab pinned to it with `?bridge_port=`. A pinned tab only ever talks to that window —
-no other window can take it, and sub-agents get a port block of their own
-(`8810 + slot * 8`) so two windows never collide.
-
-The panel shows which port the window holds, so you can tell the windows apart.
-
-Two things to know:
-
-- **Both extensions must be the same version.** An older browser extension only looks at
-  `8765`, so it will never find the second window, and the failure is silent.
-- **One account, one rate limit.** Eight windows with two sub-agents each is twenty-four
-  tabs talking to ChatGPT at once. Two or three windows is the practical ceiling.
 
 
 ## Safety
@@ -169,6 +163,7 @@ Settings live under `chatgptBridge.*`.
 
 | Setting | Default | |
 |---|---|---|
+| `thinking` | `false` | Turn on ChatGPT thinking before sending. **The toggle only appears when the open tab actually has that control and it responds** |
 | `mode` | `ask` | How much it asks before acting: `ask` / `edit` / `plan` / `never` |
 | `modes` | `[]` | Extra modes of your own |
 | `port` | `8765` | The local WebSocket port the two halves meet on |

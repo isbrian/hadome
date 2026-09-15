@@ -1,11 +1,21 @@
 .claude/**
 .git/**
+.github/**
 .gitignore
 .vscodeignore
 **/.DS_Store
 package-lock.json
 *.vsix
 *.zip
+
+# 內部開發文件與測試，不隨擴充套件發佈
+CLAUDE.md
+openspec/**
+report/**
+reports/**
+skills/**
+todo/**
+test/**
 
 node_modules/esbuild/**
 node_modules/@esbuild/**
