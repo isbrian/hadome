@@ -12,3 +12,18 @@ prior-art/
 .DS_Store
 
 .vv/
+
+# 開發側路徑：以 main（上游 v0.1.18）為基準，main 沒有的一律不進版控
+.claude/
+.github/
+.orchestration/
+.vscode/
+_claude/
+CLAUDE.md
+docs/
+openspec/
+report/
+reports/
+skills/
+test/
+todo/
