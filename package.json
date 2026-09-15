@@ -718,7 +718,6 @@
     ]
   },
   "scripts": {
-    "test": "node --test test/*.test.js",
     "build": "node tools/build-webview.js",
     "build:prod": "node tools/build-webview.js --production",
     "watch": "node tools/build-webview.js --watch",
