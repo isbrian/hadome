@@ -21,7 +21,7 @@ function 起こした(何を, pid, 命令, 足す) {
     pid,
     run_id: run_id(),
     起こした刻: new Date().toISOString(),
-    起こした者: process.env.CHATGPT_BRIDGE_STARTED_BY || 'chatgpt-web',
+    起こした者: process.env.CHATGPT_BRIDGE_STARTED_BY || 'chatgpt-bridge',
     走らせた所: process.cwd(),
     命令: String(命令 || '').slice(0, 400),
     ...(足す || {}),

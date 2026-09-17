@@ -54,7 +54,7 @@ function Gear({ enterSends, labels, hint, onToggle }) {
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
-        <span className="codicon codicon-settings-gear" aria-hidden="true" />
+        <span className="codicon codicon-newline" aria-hidden="true" />
       </button>
     </div>
   );

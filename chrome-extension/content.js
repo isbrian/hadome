@@ -83,6 +83,8 @@
 
   let turnSentAt = 0;
 
+  let sending = false;
+
   let sawDeltaThisTurn = false;
 
   let lastStuckSaid = 0;
@@ -338,6 +340,18 @@
         return;
       }
       if (!msg) {
+        return;
+      }
+      if (msg.type === 'health') {
+        let heapMB = null;
+        try {
+          if (performance.memory && typeof performance.memory.usedJSHeapSize === 'number') {
+            heapMB = Math.round(performance.memory.usedJSHeapSize / 1e6);
+          }
+        } catch {
+          heapMB = null;
+        }
+        send({ type: 'healthy', id: msg.id, heapMB });
         return;
       }
       if (msg.type === 'close_tab') {
@@ -870,8 +884,36 @@
         send({ type: 'noticeRead', id: msg.id || null, ok: true, texts: noticeTexts(), url: location.href });
         return;
       }
+      if (msg.type === 'cleanup_conversation') {
+        window.postMessage({
+          __to: 'chatgpt-bridge-page',
+          kind: 'cleanupConversation',
+          id: msg.id || null,
+          action: msg.action,
+          conversationId: msg.conversationId,
+        }, window.location.origin);
+        return;
+      }
+      if (msg.type === 'list_models') {
+        window.postMessage({
+          __to: 'chatgpt-bridge-page',
+          kind: 'listModels',
+          id: msg.id || null,
+        }, window.location.origin);
+        return;
+      }
       if (msg.type !== 'send') return;
+      sending = true;
+      send({ type: 'note', text: visibilitySnapshot('送る依頼を受けた') });
       try {
+        if (typeof msg.model === 'string' || typeof msg.thinkingEffort === 'string') {
+          window.postMessage({
+            __to: 'chatgpt-bridge-page',
+            kind: 'modelOverride',
+            model: typeof msg.model === 'string' ? msg.model : undefined,
+            thinkingEffort: typeof msg.thinkingEffort === 'string' ? msg.thinkingEffort : undefined,
+          }, window.location.origin);
+        }
         const up = await submitPrompt(msg.text, msg.files || [], {
           asFile: !!msg.asFile,
           body: typeof msg.body === 'string' ? msg.body : '',
@@ -889,6 +931,8 @@
           message: String((err && err.message) || err),
           ...(err && err.code ? { code: String(err.code) } : {}),
         });
+      } finally {
+        sending = false;
       }
     };
   }
@@ -1003,6 +1047,19 @@
       document.querySelector('textarea')
     );
   }
+
+  function visibilitySnapshot(trigger) {
+    return (
+      `[tab:vis] ${trigger} 見え方=${document.visibilityState} ` +
+      `焦点=${document.hasFocus() ? 'あり' : 'なし'} ` +
+      `入力欄=${findComposer() ? 'あり' : 'なし'} 場所=${location.pathname}`
+    );
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (!sending && !turnSentAt) return;
+    send({ type: 'note', text: visibilitySnapshot('見え方が変わった') });
+  });
 
   function noticeTexts() {
     try {
@@ -1284,6 +1341,7 @@
 
           turnSentAt = Date.now();
           sawDeltaThisTurn = false;
+          send({ type: 'note', text: visibilitySnapshot('送れた') });
 
           startTurnBeat();
 

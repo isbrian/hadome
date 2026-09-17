@@ -338,6 +338,8 @@ async function runAgentBody({
   isRevoked = null,
 
   thinking = undefined,
+  model = '',
+  thinkingEffort = '',
 }, onTools) {
 
   const 背景の走り = [];
@@ -821,6 +823,8 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
     const askOpts = {};
 
     if (typeof thinking === 'boolean') askOpts.thinking = thinking;
+    if (model) askOpts.model = model;
+    if (thinkingEffort) askOpts.thinkingEffort = thinkingEffort;
     if (onDelta) askOpts.onDelta = onDelta;
     if (onBusy) askOpts.onBusy = onBusy;
     if (onImage) askOpts.onImage = onImage;
@@ -858,6 +862,9 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
         sendText = 分け.file;
         askOpts.body = 分け.body;
         onLog(`[agent] 依頼（${分け.body.length} 文字）は入力欄に残し、決まり（${分け.file.length} 文字）だけファイルにします`);
+      } else if (turn === 1) {
+        askOpts.body = LONG_TASK_BODY;
+        onLog(`[agent] 依頼（${message.length} 文字）が長いので全部をファイルにし、入力欄には依頼がファイルに在る事だけを書きます`);
       }
     }
 
@@ -1941,6 +1948,7 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
 const TASK_MARK = '\n\n--- 今回の作業 ---\n';
 
 const BODY_MAX = 4000;
+const LONG_TASK_BODY = '今回の依頼は長いので、付けたファイルに全部入れました。ファイルの `--- 今回の作業 ---` から後が今回の依頼です。';
 
 function splitForFile(msg) {
   const at = msg.indexOf(TASK_MARK);
@@ -1958,6 +1966,7 @@ module.exports = {
   splitForFile,
   TASK_MARK,
   BODY_MAX,
+  LONG_TASK_BODY,
 
   名指しを確かめる,
   TOOL_STATE,

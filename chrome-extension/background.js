@@ -21,12 +21,33 @@ function findTabFor(port, done) {
 
 const 窓の幅 = 500;
 const 窓の高さ = 288;
-const ずれ = 36;
+const 横のずれ = 120;
+const 縦のずれ = 48;
 
 function 窓の場所(port) {
   const n = Number(port) % 10;
   if (!Number.isFinite(n)) return {};
-  return { left: 40 + n * ずれ, top: 40 + n * ずれ, width: 窓の幅, height: 窓の高さ };
+  return { left: 40 + n * 横のずれ, top: 40 + n * 縦のずれ, width: 窓の幅, height: 窓の高さ };
+}
+
+function 同じ港の古いタブを閉じる(port, done) {
+  if (!port) return done();
+  chrome.tabs.query({}, (tabs) => {
+    const queryErr = chrome.runtime.lastError;
+    if (queryErr) {
+      note('港 ' + port + ' の古いタブを探せません: ' + queryErr.message);
+      return done();
+    }
+    const re = new RegExp('[?&]bridge_port=' + port + '\\b');
+    const ids = (tabs || []).filter((t) => re.test(t.url || '')).map((t) => t.id).filter((id) => id !== undefined);
+    if (ids.length === 0) return done();
+    openedByPort.delete(String(port));
+    chrome.tabs.remove(ids, () => {
+      const removeErr = chrome.runtime.lastError;
+      note('港 ' + port + (removeErr ? ' の古いタブを閉じられません: ' + removeErr.message : ' の古いタブを閉じました: ' + ids.length + ' 件'));
+      done();
+    });
+  });
 }
 
 function 別の窓で開く(url, port, done) {
@@ -82,10 +103,12 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   note('open_tab を受け取りました');
   const 港 = (/[?&]bridge_port=(\d+)/.exec(url) || [])[1] || '';
 
-  if (/\/g\/g-p-/.test(url)) {
-    別の窓で開く(url, 港, (tab) => {
-      if (!tab) return reply({ ok: false, why: '別の窓を作れませんでした' });
-      reply({ ok: true, tabId: tab.id });
+  if (/\/g\/g-p-/.test(url) || /[?&]bridge_sub=1(?:&|$)/.test(url)) {
+    同じ港の古いタブを閉じる(港, () => {
+      別の窓で開く(url, 港, (tab) => {
+        if (!tab) return reply({ ok: false, why: '別の窓を作れませんでした' });
+        reply({ ok: true, tabId: tab.id });
+      });
     });
     return true;
   }

@@ -44,8 +44,24 @@ API キーも新しい契約も要りません。拡張機能がローカルの 
 しまってある対話を開く、書き出す、読み込む、依頼を後で流す。
 橋の決まりを ChatGPT の専案の指示欄へ書き込む所まで持っています。
 
-**任せられます。**下請けは同時に 2 本まで（`subAgents`、既定 2）。それぞれが自分の
-ChatGPT のタブを持つので、調べ物と組み立てを並べて進めても対話は止まりません。
+**任せられます。**下請けは同時に 4 本まで（`subAgents`、既定 2）。それぞれが自分の
+小さな ChatGPT の窓を持つので、調べ物と組み立てを並べて進めても対話は止まりません。
+用の済んだ下請けの対話は、既定で ChatGPT の履歴からアーカイブします（`subAgentCleanup`）。
+
+**モデルと思考の量を、エディターの中で選べます。**入力欄の下のモードのボタンを開くと、
+その契約で実際に選べるモデルの一覧（ChatGPT から読むので、Go と Business で中身が違います）と、
+思考の量の滑り子が出ます。下請けの分はパネルの頭の歯車から開く設定の頁で別に選べるので、
+主は深く考え、ファイルを読むだけの下請けは Instant で速く答える、という分け方ができます。
+
+<p align="center">
+  <img src="media/models-ja.png" width="420"
+       alt="モードの選び所を開いた姿: 4 つのモードの下に、モデルの一覧（Instant・Thinking・Pro、旧モデルは畳んだまま）と、「高」の思考の量の滑り子。">
+  &nbsp;
+  <img src="media/settings-ja.png" width="420"
+       alt="下請けの設定の頁: 数（0〜4 のボタン）・モデル・思考の量・用の済んだ対話の片づけ。">
+  <br>
+  <sub>*主はモードの選び所で、下請けは設定の頁で選ぶ。*</sub>
+</p>
 
 **ブラウザーも使えます**——ふだん使っている物ではなく。専用の設定ファイルで動かし、
 **それを碼で持っています**: 遠隔デバッグの口を触る前に、それを握っている側を読み、
@@ -179,7 +195,12 @@ npm run package:chrome   # → hadome-chrome-<版>.zip
 | `preventDoneWithOpenTodos` | `true` | やることが残っていたら終わらせない |
 | `maxTurns` | `0` | N 手番で止める（`0` は制限なし） |
 | `contextWindow` | `0` | 見込みの文脈の広さを上書きする |
-| `subAgents` | `2` | 同時に動かしてよい下請けの数 |
+| `subAgents` | `2` | 同時に動かしてよい下請けの数（0〜4） |
+| `model` | `""` | 主のモデル（空 = ChatGPT のタブで選んでいるまま） |
+| `thinkingEffort` | `""` | 主の思考の量（`min` / `standard` / `extended` / `max`） |
+| `subAgentModel` | `""` | 下請けだけのモデル |
+| `subAgentThinkingEffort` | `""` | 下請けだけの思考の量 |
+| `subAgentCleanup` | `archive-success` | 用の済んだ下請けの対話: `archive-success` / `archive-all` / `delete-success`（戻せない）/ `none` |
 | `subPortBase` | `8810` | 下請けのタブに使う最初の口 |
 | `restartGapSeconds` | `20` | 対話を引き直すまで待つ秒数 |
 | `loadGlobalRules` | `true` | 全域の決まりを読む |

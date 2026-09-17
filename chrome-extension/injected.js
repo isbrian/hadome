@@ -1,4 +1,26 @@
 (() => {
+
+  try {
+    if (new URLSearchParams(location.search).get('bridge_sub') === '1') {
+      sessionStorage.setItem('chatgpt-bridge-sub', '1');
+    }
+    if (sessionStorage.getItem('chatgpt-bridge-sub') === '1') {
+      Object.defineProperty(Document.prototype, 'visibilityState', {
+        configurable: true,
+        get() { return 'visible'; },
+      });
+      Object.defineProperty(Document.prototype, 'hidden', {
+        configurable: true,
+        get() { return false; },
+      });
+      document.addEventListener('visibilitychange', (event) => {
+        event.stopImmediatePropagation();
+      }, true);
+    }
+  } catch {
+
+  }
+
   const ORIGIN_MARK = 'chatgpt-bridge';
   const TARGET_PATH = /\/backend-api\/(f\/)?conversation(\?|$)/;
 
@@ -10,10 +32,159 @@
   const CUT_SECRET = /eyJ[A-Za-z0-9_-]{10,}(\.[A-Za-z0-9_-]+){0,2}/g;
 
   const origFetch = window.fetch;
+  let modelCatalogPromise = null;
+  let pendingModelOverrideTask = null;
 
   function post(kind, payload) {
     window.postMessage({ __from: ORIGIN_MARK, kind, payload }, window.location.origin);
   }
+
+  function modelEntry(models, slug) {
+    return models.find((entry) => entry && entry.slug === slug) || null;
+  }
+
+  function thinkingEfforts(entry) {
+    if (!entry || !Array.isArray(entry.thinking_efforts)) return [];
+    return entry.thinking_efforts
+      .map((item) => item && item.thinking_effort)
+      .filter((value) => typeof value === 'string');
+  }
+
+  function modelNote(reason) {
+    post('note', { text: '[model] 替えません: ' + reason });
+  }
+
+  async function loadAccessToken() {
+    const sessionRes = await origFetch.call(window, '/api/auth/session', { credentials: 'include' });
+    if (!sessionRes.ok) throw new Error('session を読めません（' + sessionRes.status + '）');
+    const session = await sessionRes.json();
+    const accessToken = session && session.accessToken;
+    if (typeof accessToken !== 'string' || !accessToken) throw new Error('accessToken が在りません');
+    return accessToken;
+  }
+
+  async function loadModelCatalog() {
+    if (!modelCatalogPromise) {
+      modelCatalogPromise = (async () => {
+        const accessToken = await loadAccessToken();
+        const modelsRes = await origFetch.call(window, '/backend-api/models', {
+          credentials: 'include',
+          headers: { Authorization: 'Bearer ' + accessToken },
+        });
+        if (!modelsRes.ok) throw new Error('models を読めません（' + modelsRes.status + '）');
+        const data = await modelsRes.json();
+        if (!data || !Array.isArray(data.models)) throw new Error('models[] が在りません');
+        return data;
+      })();
+    }
+    return modelCatalogPromise;
+  }
+
+  async function listModels(data) {
+    const id = data && data.id;
+    try {
+      const catalog = await loadModelCatalog();
+      const categories = Array.isArray(catalog.categories) ? catalog.categories : [];
+      const categoryByModel = new Map(categories
+        .filter((item) => item && typeof item.default_model === 'string')
+        .map((item) => [item.default_model, item]));
+      const models = catalog.models
+        .filter((entry) => entry && typeof entry.slug === 'string')
+        .map((entry) => {
+          const category = categoryByModel.get(entry.slug);
+          return {
+            slug: entry.slug,
+            title: typeof entry.title === 'string' ? entry.title : entry.slug,
+            efforts: thinkingEfforts(entry),
+            category: category ? {
+              name: category.human_category_name,
+              short: category.human_category_short_name,
+              lane: category.model_lane,
+              legacy: !!category.is_soft_deprecated || !!category.subcategory,
+            } : null,
+          };
+        });
+      post('modelsListed', { id, ok: true, models });
+    } catch (err) {
+      post('modelsListed', { id, ok: false, models: [], why: String((err && err.message) || err) });
+    }
+  }
+
+  async function cleanupConversation(data) {
+    const id = data && data.id;
+    const action = data && data.action;
+    const conversationId = data && data.conversationId;
+    const validId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(conversationId || ''));
+    const body = action === 'archive'
+      ? { is_archived: true }
+      : action === 'delete'
+        ? { is_visible: false }
+        : null;
+    if (!validId || !body) {
+      post('cleaned', { id, ok: false, status: 0, why: !validId ? 'invalid conversationId' : 'unknown action' });
+      return;
+    }
+    try {
+      const accessToken = await loadAccessToken();
+      const res = await origFetch.call(window, '/backend-api/conversation/' + conversationId, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + accessToken,
+        },
+        body: JSON.stringify(body),
+      });
+      post('cleaned', {
+        id,
+        ok: !!res.ok,
+        status: Number(res.status || 0),
+        why: res.ok ? '' : 'PATCH に失敗しました（' + res.status + '）',
+      });
+    } catch (err) {
+      post('cleaned', { id, ok: false, status: 0, why: String((err && err.message) || err) });
+    }
+  }
+
+  async function prepareModelOverride(data) {
+    try {
+      const model = typeof data.model === 'string' ? data.model : '';
+      const thinkingEffort = typeof data.thinkingEffort === 'string' ? data.thinkingEffort : '';
+      const catalog = await loadModelCatalog();
+      const models = catalog && Array.isArray(catalog.models) ? catalog.models : null;
+      if (!models) {
+        modelNote('models[] が在りません');
+        return null;
+      }
+      if (model) {
+        const entry = modelEntry(models, model);
+        if (!entry) {
+          modelNote('モデル ' + model + ' は選べません');
+          return null;
+        }
+        if (thinkingEffort && !thinkingEfforts(entry).includes(thinkingEffort)) {
+          modelNote('思考の量 ' + thinkingEffort + ' はモデル ' + model + ' では選べません');
+          return null;
+        }
+      }
+      return { model, thinkingEffort, models };
+    } catch (err) {
+      modelNote(String((err && err.message) || err));
+      return null;
+    }
+  }
+
+  window.addEventListener('message', (ev) => {
+    if (ev.source !== window) return;
+    const data = ev.data;
+    if (!data || data.__to !== 'chatgpt-bridge-page') return;
+    if (data.kind === 'modelOverride') {
+      pendingModelOverrideTask = prepareModelOverride(data);
+      return;
+    }
+    if (data.kind === 'cleanupConversation') cleanupConversation(data);
+    if (data.kind === 'listModels') listModels(data);
+  });
 
   function urlOf(input) {
     if (typeof input === 'string') return input;
@@ -184,10 +355,155 @@
     }
   }
 
+  const handoffs = new Map();
+  const pendingTopicMessages = [];
+  const MAX_PENDING_TOPIC_MESSAGES = 500;
+
+  function handleEvent(ctx, parsed) {
+    const { requestId, asm } = ctx;
+    const { feed, takeStatus, takeImages, takeLimits } = asm;
+
+    for (const t of takeStatus()) post('busy', { requestId, tool: t });
+
+    for (const l of takeLimits()) post('limits', { requestId, text: l });
+
+    for (const info of takeImages()) {
+      grabImage(info).then((r) => post('image', { requestId, ...r }));
+    }
+
+    for (const op of feed(parsed)) {
+      if (op.op === 'set') {
+        ctx.assembled = op.text;
+        ctx.lastTextAt = Date.now();
+        post('replace', { requestId, text: op.text });
+      } else if (op.op === 'model') {
+
+        post('model', { requestId, text: op.text });
+      } else if (op.op === 'autoswitch') {
+
+        post('autoswitch', { requestId, ...op });
+      } else if (op.op === 'defaultModel') {
+        post('defaultModel', { requestId, ...op });
+      } else {
+        ctx.assembled += op.text;
+        ctx.lastTextAt = Date.now();
+        post('delta', { requestId, text: op.text });
+      }
+    }
+  }
+
+  function parseEncodedItem(encoded) {
+    if (typeof encoded !== 'string') return null;
+    const dataLines = encoded.split(/\r?\n/).filter((line) => line.startsWith('data:'));
+    const bodies = dataLines.length > 0 ? dataLines.map((line) => line.slice(5).trim()) : [encoded.trim()];
+    for (const body of bodies) {
+      if (!body || body === '[DONE]') continue;
+      try {
+        return JSON.parse(body);
+      } catch {
+
+      }
+    }
+    return null;
+  }
+
+  function finishTopic(topicId, ctx) {
+    if (ctx.wsDone) return;
+    ctx.wsDone = true;
+    post('done', { requestId: ctx.requestId, text: ctx.assembled, complete: true });
+    handoffs.delete(topicId);
+    for (let i = pendingTopicMessages.length - 1; i >= 0; i -= 1) {
+      if (pendingTopicMessages[i].topicId === topicId) pendingTopicMessages.splice(i, 1);
+    }
+  }
+
+  function consumeTopicMessage(m, ctx) {
+    if (!m || typeof m !== 'object') return;
+    const outer = m.payload;
+    if (!outer || outer.type !== 'conversation-turn-stream') return;
+    const payload = outer.payload;
+    if (!payload || typeof payload !== 'object') return;
+
+    if (payload.type === 'stream-item') {
+      const id = payload.stream_item_id;
+      if (typeof id === 'string') {
+        if (ctx.seenStreamItems.has(id)) return;
+        ctx.seenStreamItems.add(id);
+      }
+      const parsed = parseEncodedItem(payload.encoded_item);
+      if (parsed) handleEvent(ctx, parsed);
+      return;
+    }
+
+    if (payload.type === 'done') finishTopic(m.topic_id, ctx);
+  }
+
+  function onTopicMessage(m) {
+    try {
+      if (!m || typeof m.topic_id !== 'string' || !m.topic_id.startsWith('conversation-turn-')) return;
+      const ctx = handoffs.get(m.topic_id);
+      if (ctx) {
+        consumeTopicMessage(m, ctx);
+        return;
+      }
+      pendingTopicMessages.push({ topicId: m.topic_id, message: m });
+      if (pendingTopicMessages.length > MAX_PENDING_TOPIC_MESSAGES) pendingTopicMessages.shift();
+    } catch {
+
+    }
+  }
+
+  function registerHandoff(topicId, ctx) {
+    ctx.handoffTopic = topicId;
+    handoffs.set(topicId, ctx);
+    const queued = [];
+    for (let i = pendingTopicMessages.length - 1; i >= 0; i -= 1) {
+      if (pendingTopicMessages[i].topicId !== topicId) continue;
+      queued.unshift(pendingTopicMessages[i].message);
+      pendingTopicMessages.splice(i, 1);
+    }
+    for (const m of queued) consumeTopicMessage(m, ctx);
+  }
+
+  function onWsFrame(ev) {
+    try {
+      if (!ev || typeof ev.data !== 'string') return;
+      const frame = JSON.parse(ev.data);
+      if (!Array.isArray(frame)) return;
+      for (const item of frame) {
+        if (!item || typeof item !== 'object') continue;
+        if (item.type === 'message') {
+          onTopicMessage(item);
+        } else if (item.type === 'reply' && item.reply && Array.isArray(item.reply.catchups)) {
+          for (const m of item.reply.catchups) onTopicMessage(m);
+        }
+      }
+    } catch {
+
+    }
+  }
+
+  const NativeWebSocket = window.WebSocket;
+  if (typeof NativeWebSocket === 'function') {
+    window.WebSocket = new Proxy(NativeWebSocket, {
+      construct(target, args, newTarget) {
+        const ws = Reflect.construct(target, args, newTarget);
+        try {
+          const url = String(args[0] || '');
+          if (url.startsWith('wss://ws.chatgpt.com/')) ws.addEventListener('message', onWsFrame);
+        } catch {
+
+        }
+        return ws;
+      },
+    });
+  }
+
   async function drain(stream, requestId, url, status) {
     const reader = stream.getReader();
     const decoder = new TextDecoder();
-    const { feed, takeStatus, takeImages, takeLimits, isComplete } = makeAssembler();
+    const asm = makeAssembler();
+    const { isComplete } = asm;
     let buffer = '';
     let assembled = '';
     let rawSent = 0;
@@ -200,6 +516,25 @@
 
     const BEAT_MS = 5000;
     let lastTextAt = openedAt;
+    const ctx = {
+      requestId,
+      asm,
+      get assembled() {
+        return assembled;
+      },
+      set assembled(value) {
+        assembled = value;
+      },
+      get lastTextAt() {
+        return lastTextAt;
+      },
+      set lastTextAt(value) {
+        lastTextAt = value;
+      },
+      handoffTopic: null,
+      seenStreamItems: new Set(),
+      wsDone: false,
+    };
     const beat = setInterval(() => {
       post('stream_beat', {
         requestId,
@@ -249,54 +584,37 @@
               continue;
             }
 
-            for (const t of takeStatus()) post('busy', { requestId, tool: t });
-
-            for (const l of takeLimits()) post('limits', { requestId, text: l });
-
-            for (const info of takeImages()) {
-              grabImage(info).then((r) => post('image', { requestId, ...r }));
+            if (parsed.type === 'stream_handoff' && Array.isArray(parsed.options)) {
+              const ws = parsed.options.find((option) => option && option.type === 'subscribe_ws_topic');
+              if (ws && typeof ws.topic_id === 'string') registerHandoff(ws.topic_id, ctx);
             }
 
-            for (const op of feed(parsed)) {
-              if (op.op === 'set') {
-                assembled = op.text;
-                lastTextAt = Date.now();
-                post('replace', { requestId, text: op.text });
-              } else if (op.op === 'model') {
-
-                post('model', { requestId, text: op.text });
-              } else if (op.op === 'autoswitch') {
-
-                post('autoswitch', { requestId, ...op });
-              } else if (op.op === 'defaultModel') {
-                post('defaultModel', { requestId, ...op });
-              } else {
-                assembled += op.text;
-                lastTextAt = Date.now();
-                post('delta', { requestId, text: op.text });
-              }
-            }
+            handleEvent(ctx, parsed);
           }
         }
       }
 
       const complete = isComplete();
-      post('done', { requestId, text: assembled, complete });
+      if (ctx.handoffTopic) {
+        post('busy', { requestId, tool: 'stream_handoff' });
+      } else {
+        post('done', { requestId, text: assembled, complete });
 
-      if (!complete || assembled.length === 0) {
-        post('stream_cut', {
-          requestId,
-          url,
-          status,
-          why: !complete && assembled.length === 0 ? 'nothing' : !complete ? 'no-end-mark' : 'no-text',
-          ms: Date.now() - openedAt,
-          events,
-          bytes,
-          chars: assembled.length,
-          complete,
-          head,
-          tail,
-        });
+        if (!complete || assembled.length === 0) {
+          post('stream_cut', {
+            requestId,
+            url,
+            status,
+            why: !complete && assembled.length === 0 ? 'nothing' : !complete ? 'no-end-mark' : 'no-text',
+            ms: Date.now() - openedAt,
+            events,
+            bytes,
+            chars: assembled.length,
+            complete,
+            head,
+            tail,
+          });
+        }
       }
     } catch (err) {
       post('error', { requestId, message: String((err && err.message) || err) });
@@ -322,9 +640,52 @@
   }
 
   window.fetch = async function (...args) {
-    const res = await origFetch.apply(this, args);
+    let fetchArgs = args;
+    const url = urlOf(args[0]);
+    const init = args[1];
+    if (
+      TARGET_PATH.test(url) &&
+      init &&
+      String(init.method || 'GET').toUpperCase() === 'POST' &&
+      typeof init.body === 'string' &&
+      pendingModelOverrideTask
+    ) {
+      const task = pendingModelOverrideTask;
+      pendingModelOverrideTask = null;
+      try {
+        const override = await task;
+        if (override) {
+          const body = JSON.parse(init.body);
+          const oldModel = typeof body.model === 'string' ? body.model : '';
+          const oldEffort = typeof body.thinking_effort === 'string' ? body.thinking_effort : '';
+          const nextModel = override.model || oldModel;
+          const entry = modelEntry(override.models, nextModel);
+          if (!entry) {
+            modelNote('モデル ' + nextModel + ' は選べません');
+          } else if (override.thinkingEffort && !thinkingEfforts(entry).includes(override.thinkingEffort)) {
+            modelNote('思考の量 ' + override.thinkingEffort + ' はモデル ' + nextModel + ' では選べません');
+          } else {
+            if (override.model) body.model = override.model;
+            const efforts = thinkingEfforts(entry);
+            if (efforts.length === 0) delete body.thinking_effort;
+            else if (override.thinkingEffort) body.thinking_effort = override.thinkingEffort;
+            const newEffort = typeof body.thinking_effort === 'string' ? body.thinking_effort : 'なし';
+            fetchArgs = [args[0], { ...init, body: JSON.stringify(body) }, ...args.slice(2)];
+            post('note', {
+              text:
+                '[model] 送る本文のモデルを ' + oldModel + ' → ' + body.model +
+                '、思考の量を ' + (oldEffort || 'なし') + ' → ' + newEffort + ' に替えました',
+            });
+          }
+        }
+      } catch (err) {
+        modelNote(String((err && err.message) || err));
+      }
+    }
+
+    const res = await origFetch.apply(this, fetchArgs);
     try {
-      if (!TARGET_PATH.test(urlOf(args[0])) || !res.body) return res;
+      if (!TARGET_PATH.test(urlOf(fetchArgs[0])) || !res.body) return res;
       const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
       if (!res.ok) {
