@@ -2,7 +2,7 @@
   "name": "hadome",
   "displayName": "%extension.displayName%",
   "description": "%extension.description%",
-  "version": "0.1.19",
+  "version": "0.1.20",
   "publisher": "local",
   "private": true,
   "license": "AGPL-3.0-or-later",
@@ -68,7 +68,8 @@
       {
         "command": "chatgptBridge.openSettings",
         "title": "%command.openSettings.title%",
-        "category": "%extension.displayName%"
+        "category": "%extension.displayName%",
+        "icon": "$(settings-gear)"
       },
       {
         "command": "chatgptBridge.clearInputHistory",
@@ -303,6 +304,17 @@
           "maximum": 4,
           "description": "%config.subAgents.description%"
         },
+        "chatgptBridge.subAgentCleanup": {
+          "type": "string",
+          "enum": [
+            "none",
+            "archive-success",
+            "archive-all",
+            "delete-success"
+          ],
+          "default": "archive-success",
+          "description": "%config.subAgentCleanup.description%"
+        },
         "chatgptBridge.restartGapSeconds": {
           "type": "number",
           "default": 20,
@@ -411,6 +423,26 @@
           "type": "boolean",
           "default": false,
           "description": "%config.thinking.description%"
+        },
+        "chatgptBridge.model": {
+          "type": "string",
+          "default": "",
+          "description": "%config.model.description%"
+        },
+        "chatgptBridge.thinkingEffort": {
+          "type": "string",
+          "default": "",
+          "description": "%config.thinkingEffort.description%"
+        },
+        "chatgptBridge.subAgentModel": {
+          "type": "string",
+          "default": "",
+          "description": "%config.subAgentModel.description%"
+        },
+        "chatgptBridge.subAgentThinkingEffort": {
+          "type": "string",
+          "default": "",
+          "description": "%config.subAgentThinkingEffort.description%"
         },
         "chatgptBridge.mode": {
           "type": "string",
@@ -614,6 +646,11 @@
           "command": "chatgptBridge.showLog",
           "when": "view == chatgptBridge.chat || view == chatgptBridge.chatSecondary",
           "group": "navigation@3"
+        },
+        {
+          "command": "chatgptBridge.openSettings",
+          "when": "view == chatgptBridge.chat || view == chatgptBridge.chatSecondary",
+          "group": "navigation@4"
         }
       ],
       "editor/context": [

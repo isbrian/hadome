@@ -92,16 +92,23 @@ function needsSkillFirst(rel, named, read) {
 }
 
 const WANTS_FILE =
-  /html|ファイルに|ファイルへ|書き出|出力し|作成し|作って|檔案|輸出|產出|生成.*(檔|檔案|報告|網頁)|保存/i;
+  /(?<![.A-Za-z0-9])html|ファイルに|ファイルへ|書き出|出力し|作成し|作って|做成|寫成|存成|輸出成|建立.*(檔|網頁)|寫(入|到).*檔|產出|生成.*(檔|檔案|報告|網頁)|保存/i;
+
+const READ_ONLY_TASK =
+  /書き換え(は)?しないで|変更しないで|編集しないで|読むだけ|不要修改|不要改|別修改|只(讀|看)|唯讀|do not (modify|change|edit)|read[- ]only/i;
 
 const SKIP_IF_EXISTS =
   /既に(在|あ)れば|既に(在|あ)る|何も(足さ|作ら)ないで|不要な?ら|要らなければ|なければ.*だけ/i;
 
 function needsFileFirst(task, wroteAny) {
   if (wroteAny) return null;
+  const text = String(task || '');
 
-  if (SKIP_IF_EXISTS.test(String(task || ''))) return null;
-  if (!WANTS_FILE.test(String(task || ''))) return null;
+  if (SKIP_IF_EXISTS.test(text)) return null;
+  const wantsFile = WANTS_FILE.test(text);
+
+  if (READ_ONLY_TASK.test(text) && !wantsFile) return null;
+  if (!wantsFile) return null;
   return (
     '頼まれたものを、まだ作っていません。調べただけでは、頼んだ人の手元に何も残りません。' +
 
@@ -172,6 +179,7 @@ module.exports = {
   HINTS,
   NEEDS_SKILL,
   WANTS_FILE,
+  READ_ONLY_TASK,
   WANTS_DETAIL,
   KEEP_RATIO,
 };

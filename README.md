@@ -48,9 +48,26 @@ own tool set, reopen a saved one, export it, import it back, or schedule a promp
 later. The bridge can also write its own rules into a ChatGPT project's instructions for
 you.
 
-**It can delegate.** Up to two sub-agents run at once (`subAgents`, default 2), each in
-its own ChatGPT tab, so a search and a build can happen side by side without blocking
-the conversation.
+**It can delegate.** Up to four sub-agents run at once (`subAgents`, default 2), each in
+its own small ChatGPT window, so a search and a build can happen side by side without blocking
+the conversation. Finished sub-agent conversations are archived in ChatGPT by default, so
+your history stays clean (`subAgentCleanup`).
+
+**Pick the model and thinking effort without leaving the editor.** The mode button under the
+input box lists the models your ChatGPT plan actually offers — read from ChatGPT, so a Go and a
+Business account see different lists — plus a thinking-effort slider. Sub-agents get their own
+choice on the settings page (the gear at the top of the panel), so the main agent can think hard
+while sub-agents that only read files answer on Instant.
+
+<p align="center">
+  <img src="media/models-en.png" width="420"
+       alt="The mode menu opened: four permission modes, then a model list (Instant, Thinking, Pro, with legacy models folded) and a thinking-effort slider set to High.">
+  &nbsp;
+  <img src="media/settings-en.png" width="420"
+       alt="Sub-agent settings: count buttons 0 to 4, model, thinking effort, and what to do with finished conversations.">
+  <br>
+  <sub>*Main agent in the mode menu, sub-agents on the settings page.*</sub>
+</p>
 
 **It can use a browser** — not yours. It runs a separate profile, and that is enforced
 in code: before touching a debugging port it reads which process holds it and refuses
@@ -186,7 +203,12 @@ Settings live under `chatgptBridge.*`.
 | `preventDoneWithOpenTodos` | `true` | Refuse to finish while todos are open |
 | `maxTurns` | `0` | Stop after N turns (`0` = no limit) |
 | `contextWindow` | `0` | Override the assumed context size |
-| `subAgents` | `2` | How many sub-agents may run at once |
+| `subAgents` | `2` | How many sub-agents may run at once (0–4) |
+| `model` | `""` | Model for the main agent (empty = whatever is selected in the ChatGPT tab) |
+| `thinkingEffort` | `""` | Thinking effort for the main agent (`min` / `standard` / `extended` / `max`) |
+| `subAgentModel` | `""` | Model for sub-agents only |
+| `subAgentThinkingEffort` | `""` | Thinking effort for sub-agents only |
+| `subAgentCleanup` | `archive-success` | Finished sub-agent conversations: `archive-success` / `archive-all` / `delete-success` (cannot be undone) / `none` |
 | `subPortBase` | `8810` | First port used for sub-agent tabs |
 | `restartGapSeconds` | `20` | Wait this long before re-opening a conversation |
 | `loadGlobalRules` | `true` | Read your global agent rules |

@@ -8,7 +8,7 @@ const { describeUsage } = require('./src/usage');
 
 const os = require('os');
 const fs = require('fs');
-const { openBridge } = require('./src/bridge');
+const { openBridge, HEAP_WARN_MB } = require('./src/bridge');
 
 const { projectInstructions } = require('./src/projectrules');
 const { runAgent, toolStateOf } = require('./src/agent');
@@ -253,6 +253,11 @@ function settings() {
     protectSecrets: c.get('protectSecrets', true),
     loadGlobalRules: c.get('loadGlobalRules', true),
     subAgents: c.get('subAgents', 2),
+    subAgentCleanup: c.get('subAgentCleanup', 'archive-success'),
+    model: c.get('model', ''),
+    thinkingEffort: c.get('thinkingEffort', ''),
+    subAgentModel: c.get('subAgentModel', ''),
+    subAgentThinkingEffort: c.get('subAgentThinkingEffort', ''),
 
     restartGapSeconds: c.get('restartGapSeconds', 20),
 
@@ -354,6 +359,7 @@ function projectHomeOf(url) {
 
 async function ensureBridge(s, port) {
   if (s.bridge) return true;
+  let tabHeavyWarned = false;
   post({ type: 'note', text: t('note.waitingTab') });
   try {
     s.bridge = await openBridge({
@@ -366,6 +372,23 @@ async function ensureBridge(s, port) {
 
       onConversationChange: (id, url, title, fromId) =>
         handleConversationChange(s, id, url, fromId),
+      onTabHealth: (st) => {
+        if (!st || st.ok === false) {
+          const text = t('note.tabUnresponsive');
+          post({ type: 'note', text });
+          log(`[bridge] ${text}`);
+          return;
+        }
+        if (typeof st.heapMB !== 'number') return;
+        if (st.heapMB >= HEAP_WARN_MB) {
+          if (!tabHeavyWarned) {
+            tabHeavyWarned = true;
+            post({ type: 'note', text: t('note.tabHeavy', { mb: st.heapMB }) });
+          }
+        } else {
+          tabHeavyWarned = false;
+        }
+      },
 
       onThinkingState: (st) => {
         post({
@@ -536,6 +559,8 @@ function makeSpawner(s, opts) {
         isRevoked: isRevokedAllow,
 
         readOnly: true,
+        model: settings().subAgentModel,
+        thinkingEffort: settings().subAgentThinkingEffort,
 
         global: loadGlobal(s.root),
 
@@ -564,6 +589,24 @@ function makeSpawner(s, opts) {
           });
         },
       });
+      const cleanupMode = settings().subAgentCleanup;
+      let cleanupAction = '';
+      if (cleanupMode === 'archive-all' || (cleanupMode === 'archive-success' && r.status === 'done')) cleanupAction = 'archive';
+      if (cleanupMode === 'delete-success' && r.status === 'done') cleanupAction = 'delete';
+      if (cleanupAction && bridge && typeof bridge.cleanupConversation === 'function') {
+        const cleanupPort = settings().subPortBase + at - 1;
+        try {
+          const cleaned = await bridge.cleanupConversation(cleanupAction);
+          if (cleaned && cleaned.ok) {
+            log(`[sub:${cleanupPort}] 対話を ${cleanupAction} しました`);
+          } else {
+            const why = String((cleaned && (cleaned.why || cleaned.status)) || 'unknown');
+            log(`[sub:${cleanupPort}] 対話を ${cleanupAction} できませんでした（${why}）`);
+          }
+        } catch (e) {
+          log(`[sub:${cleanupPort}] 対話を ${cleanupAction} できませんでした（${String((e && e.message) || e)}）`);
+        }
+      }
 
       const all = String(r.allAnswers || '').trim();
       if (all) return all;
@@ -773,6 +816,8 @@ async function handleRun(task) {
       mode: settings().mode,
 
       thinking: settings().thinking,
+      model: settings().model,
+      thinkingEffort: settings().thinkingEffort,
 
       restartGapMs: Math.max(0, Number(settings().restartGapSeconds) || 0) * 1000,
 
@@ -2333,6 +2378,97 @@ const fromWebview = {
     }
   },
 
+  agentSettings() {
+    const config = vscode.workspace.getConfiguration('chatgptBridge');
+    return {
+      model: config.get('model', ''),
+      thinkingEffort: config.get('thinkingEffort', ''),
+      subAgents: config.get('subAgents', 2),
+      subAgentModel: config.get('subAgentModel', ''),
+      subAgentThinkingEffort: config.get('subAgentThinkingEffort', ''),
+      subAgentCleanup: config.get('subAgentCleanup', 'archive-success'),
+    };
+  },
+
+  async agentModels() {
+    const cached = globalStore && globalStore.get('agentModelsCache');
+    const cachedReply = () => {
+      if (cached && Array.isArray(cached.models)) {
+        return { ok: true, models: cached.models, cached: true, at: cached.at };
+      }
+      return { ok: false, models: [] };
+    };
+    const s = ensureSession();
+    if (!s) return cachedReply();
+    if (!s.bridge && !(await ensureBridge(s, settings().port))) return cachedReply();
+    try {
+      const result = await s.bridge.listModels();
+      if (!result || !result.ok || !Array.isArray(result.models)) return cachedReply();
+      const value = { models: result.models, at: Date.now() };
+      if (globalStore) await globalStore.update('agentModelsCache', value);
+      return { ok: true, models: value.models, cached: false, at: value.at };
+    } catch (_) {
+      return cachedReply();
+    }
+  },
+
+  async agentSettingsSet({ key, value } = {}) {
+    const allowed = new Set([
+      'model',
+      'thinkingEffort',
+      'subAgents',
+      'subAgentModel',
+      'subAgentThinkingEffort',
+      'subAgentCleanup',
+    ]);
+    let written = false;
+    if (allowed.has(key)) {
+      let valid = false;
+      if (key === 'subAgents') {
+        valid = Number.isInteger(value) && value >= 0 && value <= 4;
+      } else if (key === 'subAgentCleanup') {
+        valid = ['archive-success', 'archive-all', 'delete-success', 'none'].includes(value);
+      } else {
+        valid = typeof value === 'string';
+      }
+
+      if (valid) {
+        if (key === 'subAgentCleanup' && value === 'delete-success') {
+          const answer = await vscode.window.showWarningMessage(
+            t('agentSettings.deleteWarn'),
+            { modal: true },
+            t('agentSettings.deleteOk')
+          );
+          valid = answer === t('agentSettings.deleteOk');
+        }
+        if (valid) {
+          await vscode.workspace
+            .getConfiguration('chatgptBridge')
+            .update(key, value, vscode.ConfigurationTarget.Global);
+          written = true;
+        }
+      }
+    }
+
+    const config = vscode.workspace.getConfiguration('chatgptBridge');
+    return {
+      values: {
+        model: config.get('model', ''),
+        thinkingEffort: config.get('thinkingEffort', ''),
+        subAgents: config.get('subAgents', 2),
+        subAgentModel: config.get('subAgentModel', ''),
+        subAgentThinkingEffort: config.get('subAgentThinkingEffort', ''),
+        subAgentCleanup: config.get('subAgentCleanup', 'archive-success'),
+      },
+      written,
+    };
+  },
+
+  async openAllSettings() {
+    await vscode.commands.executeCommand('workbench.action.openSettings', 'chatgptBridge');
+    return { ok: true };
+  },
+
   async keys({ enterSends } = {}) {
 
     if (typeof enterSends === 'boolean') {
@@ -3288,8 +3424,8 @@ async function importChat() {
   });
 }
 
-function openSettings() {
-  return vscode.commands.executeCommand('workbench.action.openSettings', 'chatgptBridge');
+async function openSettings() {
+  post({ type: 'openSettings' });
 }
 
 function clearInputHistory() {
