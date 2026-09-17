@@ -35,6 +35,7 @@ const { State } = require('./ui/State');
 const { Empty } = require('./ui/Empty');
 const { Bar } = require('./ui/Bar');
 const { Gear } = require('./ui/Gear');
+const { Settings } = require('./ui/Settings');
 const { Todos } = require('./ui/Todos');
 
 const { Changes } = require('./ui/Changes');
@@ -121,7 +122,7 @@ window.Bridge = {
   splitBang: require('../../src/bang').splitBang,
 
   modeOrder: require('./ui/modeCycle').ORDER,
-  ui: { Note, Msg, Result, Tool, Mode, Gear, Todos, Changes, Ask, Shot, Chips, Queue, Picks, State, Empty, Bar, Sub, Cmd, Usage },
+  ui: { Note, Msg, Result, Tool, Mode, Gear, Settings, Todos, Changes, Ask, Shot, Chips, Queue, Picks, State, Empty, Bar, Sub, Cmd, Usage },
   changedPaths,
 
   highlight: require('./highlight').highlight,

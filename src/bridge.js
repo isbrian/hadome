@@ -16,6 +16,8 @@ const SILENCE_AFTER_TEXT_MS = 60000;
 const SILENCE_AFTER_CUT_MS = 30000;
 const RECONNECT_WAIT_MS = 30000;
 
+const ENTRY_RENDER_WAIT_MS = 15000;
+
 const RELOAD_WAIT_MS = 15000;
 
 const EXPECTED_TAB_PROTOCOL = 60;
@@ -116,10 +118,17 @@ const JA_FALLBACK = {
   'br.howToFind': ({ port }) => `調べる時: lsof -ti:${port} -sTCP:LISTEN`,
 };
 
+const HEALTH_INTERVAL_MS = 30000;
+
+const HEALTH_TIMEOUT_MS = 15000;
+
+const HEAP_WARN_MB = 1500;
+
 function openBridge({
   port = DEFAULT_PORT,
   onLog = () => {},
   onConversationChange = () => {},
+  onTabHealth = () => {},
 
   onThinkingState = () => {},
 
@@ -155,6 +164,60 @@ function openBridge({
 
     let lastBrands = null;
     let lastUa = '';
+    let healthTimer = null;
+    let healthTimeoutTimer = null;
+    let healthWaitingId = null;
+    let healthSeq = 0;
+    let healthEverHealthy = false;
+    let healthOldPeerReported = false;
+    let healthUnresponsiveReported = false;
+
+    function reportTabHealth(st) {
+      try {
+        onTabHealth(st);
+      } catch {
+
+      }
+    }
+
+    function clearHealthWait() {
+      if (healthTimeoutTimer) {
+        clearTimeout(healthTimeoutTimer);
+        healthTimeoutTimer = null;
+      }
+      healthWaitingId = null;
+    }
+
+    function sendHealth() {
+      if (closed || !sock || sock.readyState !== 1 || healthWaitingId) return;
+      const id = `health-${++healthSeq}`;
+      healthWaitingId = id;
+      try {
+        sock.send(JSON.stringify({ type: 'health', id }));
+      } catch {
+        clearHealthWait();
+        return;
+      }
+      healthTimeoutTimer = setTimeout(() => {
+        if (healthWaitingId !== id) return;
+        healthTimeoutTimer = null;
+        healthWaitingId = null;
+        if (!healthEverHealthy) {
+          if (!healthOldPeerReported) {
+            healthOldPeerReported = true;
+            onLog(`[bridge:${openedPort}] タブが health に答えません（古い相方の見込み）`);
+          }
+          return;
+        }
+        if (!healthUnresponsiveReported) {
+          healthUnresponsiveReported = true;
+          reportTabHealth({ ok: false, why: 'unresponsive' });
+        }
+      }, HEALTH_TIMEOUT_MS);
+    }
+
+    healthTimer = setInterval(sendHealth, HEALTH_INTERVAL_MS);
+
     const tabWaiters = [];
     const tabOpeners = new Map();
     const projectWaiters = new Map();
@@ -164,6 +227,8 @@ function openBridge({
     const noticeWaiters = new Map();
     const makeWaiters = new Map();
     const probeWaiters = new Map();
+    const cleanupWaiters = new Map();
+    const modelsWaiters = new Map();
     const hopWaiters = new Map();
 
     function wireServer() {
@@ -242,6 +307,8 @@ function openBridge({
               if (targetId !== who) onLog(`[bridge:${port}] 送り先のタブ: ${who}`);
               targetId = who;
               sock = ws;
+              healthEverHealthy = false;
+              healthOldPeerReported = false;
 
               try {
 
@@ -292,6 +359,16 @@ function openBridge({
           }
 
           if (ws !== sock) return;
+          if (m.type === 'healthy') {
+            if (m.id === healthWaitingId) clearHealthWait();
+            healthEverHealthy = true;
+            healthUnresponsiveReported = false;
+            reportTabHealth({
+              ok: true,
+              heapMB: typeof m.heapMB === 'number' ? m.heapMB : null,
+            });
+            return;
+          }
 
           if (m.type === 'projectCreated') {
             const fn = makeWaiters.get(m.id);
@@ -321,6 +398,22 @@ function openBridge({
             const fn = probeWaiters.get(m.id);
             if (fn) {
               probeWaiters.delete(m.id);
+              fn(m);
+            }
+            return;
+          }
+          if (m.type === 'cleaned') {
+            const fn = cleanupWaiters.get(m.id);
+            if (fn) {
+              cleanupWaiters.delete(m.id);
+              fn(m);
+            }
+            return;
+          }
+          if (m.type === 'modelsListed') {
+            const fn = modelsWaiters.get(m.id);
+            if (fn) {
+              modelsWaiters.delete(m.id);
               fn(m);
             }
             return;
@@ -547,6 +640,7 @@ function openBridge({
 
           if (sock !== ws) return;
           sock = null;
+          clearHealthWait();
           try {
             portlock.markTab(openedPort, false);
           } catch {
@@ -750,6 +844,8 @@ function openBridge({
         asFile = false,
 
         thinking = undefined,
+        model = '',
+        thinkingEffort = '',
 
         body = '',
       } = {}
@@ -887,6 +983,8 @@ function openBridge({
             ...(asFile && body ? { body: String(body) } : {}),
 
             ...(typeof thinking === 'boolean' ? { thinking } : {}),
+            ...(model ? { model: String(model) } : {}),
+            ...(thinkingEffort ? { thinkingEffort: String(thinkingEffort) } : {}),
           })
         );
       });
@@ -943,7 +1041,7 @@ function openBridge({
           return;
         }
 
-        const url = 'https://chatgpt.com/?bridge_port=' + subPort;
+        const url = 'https://chatgpt.com/?bridge_port=' + subPort + '&bridge_sub=1';
         sock.send(JSON.stringify({ type: 'open_tab', id, url }));
       });
     }
@@ -1097,6 +1195,50 @@ function openBridge({
       });
     }
 
+    async function listModels(timeoutMs = 10000) {
+      if (!sock) await waitForTab(CONNECT_TIMEOUT_MS);
+      const id = `m${++seq}`;
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          modelsWaiters.delete(id);
+          resolve({ ok: false, models: [], why: 'timeout' });
+        }, timeoutMs);
+        modelsWaiters.set(id, (m) => {
+          clearTimeout(timer);
+          resolve({
+            ok: !!m.ok,
+            models: Array.isArray(m.models) ? m.models : [],
+            why: String(m.why || ''),
+          });
+        });
+        sock.send(JSON.stringify({ type: 'list_models', id }));
+      });
+    }
+
+    async function cleanupConversation(action, timeoutMs = 10000) {
+      if (!sock) await waitForTab(CONNECT_TIMEOUT_MS);
+      const match = String(lastUrl || '').match(/\/c\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
+      const conversationId = match ? match[1] : '';
+      if (!conversationId) return { ok: false, why: 'no-conversation-id', conversationId: '' };
+      const id = `k${++seq}`;
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          cleanupWaiters.delete(id);
+          resolve({ ok: false, status: 0, why: 'timeout', conversationId });
+        }, timeoutMs);
+        cleanupWaiters.set(id, (m) => {
+          clearTimeout(timer);
+          resolve({
+            ok: !!m.ok,
+            status: Number(m.status || 0),
+            why: String(m.why || ''),
+            conversationId,
+          });
+        });
+        sock.send(JSON.stringify({ type: 'cleanup_conversation', id, action: String(action || ''), conversationId }));
+      });
+    }
+
     async function projectHop(timeoutMs = 30000) {
       if (!sock) await waitForTab(CONNECT_TIMEOUT_MS);
       const id = `h${++seq}`;
@@ -1172,7 +1314,13 @@ function openBridge({
       await new Promise((r) => setTimeout(r, 1500));
 
       const atEntry = /\/g\/g-p-[^/]+\/project/.test(String(lastUrl || ''));
-      const seen = atEntry ? await probe() : { ok: false, composer: false, conversations: [] };
+      let seen = atEntry ? await probe() : { ok: false, composer: false, conversations: [] };
+
+      const renderUntil = Date.now() + ENTRY_RENDER_WAIT_MS;
+      while (atEntry && seen.ok && !seen.composer && Date.now() < renderUntil) {
+        await new Promise((r) => setTimeout(r, 500));
+        seen = await probe();
+      }
       if (atEntry && seen.ok && !seen.composer) {
         const want = (/\/g\/(g-p-[A-Za-z0-9-]+)/.exec(String(lastUrl || '')) || [])[1] || '';
         onLog(t('br.projectEntryBroken', { where: String(lastUrl || '') }));
@@ -1235,6 +1383,8 @@ function openBridge({
       readInstructions,
       readNotice,
       probe,
+      listModels,
+      cleanupConversation,
       projectHop,
       createProject,
       openTabFor,
@@ -1262,6 +1412,11 @@ function openBridge({
 
       close() {
         closed = true;
+        if (healthTimer) {
+          clearInterval(healthTimer);
+          healthTimer = null;
+        }
+        clearHealthWait();
 
         try {
           if (sock) sock.close();
@@ -1311,6 +1466,9 @@ module.exports = {
   stripUiMarks,
   DEFAULT_PORT,
   EXPECTED_TAB_PROTOCOL,
+  HEALTH_INTERVAL_MS,
+  HEALTH_TIMEOUT_MS,
+  HEAP_WARN_MB,
   isConversationUrl,
   conversationIdOf,
 };

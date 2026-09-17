@@ -677,7 +677,7 @@
         flex-direction: column;
 
         min-width: 260px;
-        max-width: min(420px, calc(100vw - var(--sp-5) * 2));
+        overflow-y: auto;
         padding: var(--sp-1);
         border: 1px solid var(--role-border);
         border-radius: var(--radius);
@@ -698,6 +698,70 @@
         font-size: var(--text-sm);
         display: flex;
         gap: var(--sp-2);
+      }
+      .modelpick { display: flex; flex-direction: column; }
+      .modelgroup,
+      .modelstatus {
+        padding: var(--sp-1) var(--sp-2);
+        color: var(--role-muted-fg);
+        font-size: var(--text-sm);
+      }
+      .effortitem {
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+      }
+      .effortLabel {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+      }
+      .effortLabel .nm {
+        white-space: nowrap;
+      }
+      .effortLabel .mark {
+        width: 20px;
+        height: 20px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 auto;
+      }
+      .effortLevelInline {
+        color: var(--role-muted-fg);
+        margin-left: calc(-1 * var(--sp-2) - var(--sp-1));
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .effortslider {
+        --track-height: 18px;
+        --thumb-size: 14px;
+        --thumb-inset: 2px;
+        --track-width: 76px;
+        width: var(--track-width);
+        height: var(--track-height);
+        border-radius: calc(var(--track-height) / 2);
+        background: var(--vscode-input-border, var(--vscode-widget-border));
+        position: relative;
+        overflow: hidden;
+        cursor: pointer;
+        border: none;
+        padding: 0;
+        flex: 0 0 auto;
+        flex-shrink: 0;
+      }
+      .effortthumb {
+        position: absolute;
+        top: var(--thumb-inset);
+        width: var(--thumb-size);
+        height: var(--thumb-size);
+        border-radius: 50%;
+        background: var(--role-primary-fg);
+        transition: left 0.15s;
+        box-shadow: 0 1px 2px #0003;
       }
 
       .modeitem { color: var(--role-primary-fg); }
@@ -792,6 +856,61 @@
 
       .gearitem .mark { opacity: 0; }
       .gearitem.now .mark { opacity: 1; }
+
+      #settings {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: auto;
+        padding: var(--sp-3);
+      }
+      #settings[hidden] { display: none; }
+      .settingspage { max-width: 720px; margin-inline: auto; }
+      .settingshead { display: flex; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-4); }
+      .settingshead h2 { margin: 0; font-size: var(--text-lg); font-weight: 600; }
+      .settingspage section { margin-bottom: var(--sp-5); }
+      .settingspage h3 { margin: 0 0 var(--sp-2); font-size: var(--text-sm); font-weight: 600; }
+      .settingsrow { display: grid; grid-template-columns: minmax(8em, 1fr) minmax(0, 2fr); gap: var(--sp-3); align-items: start; padding: var(--sp-2) 0; }
+      .settingslabel { padding-top: var(--sp-2); }
+      .settingscontrol { min-width: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
+      .settingscontrol select {
+        width: 100%;
+        min-width: 0;
+        padding: var(--sp-2);
+        border: 1px solid var(--vscode-dropdown-border);
+        border-radius: var(--radius);
+        background: var(--vscode-dropdown-background);
+        color: var(--vscode-dropdown-foreground);
+        font: inherit;
+      }
+      .settingsnote { color: var(--role-secondary-fg); font-size: var(--text-xs); }
+      .settingsmainhint { margin: calc(-1 * var(--sp-2)) 0 var(--sp-4); }
+      .settingsmodelnote { margin: var(--sp-1) 0 var(--sp-2); padding-left: var(--sp-2); }
+      .settingscount { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
+      .settingscount button {
+        min-width: 2.4em;
+        padding: var(--sp-2) var(--sp-3);
+        border: 1px solid var(--vscode-button-border);
+        border-radius: var(--radius);
+        background: var(--vscode-button-secondaryBackground);
+        color: var(--vscode-button-secondaryForeground);
+        font: inherit;
+        cursor: pointer;
+      }
+      .settingscount button.now {
+        background: var(--role-button-bg);
+        color: var(--role-button-fg);
+      }
+      .settingscleanup { display: flex; flex-direction: column; }
+      .settingsall {
+        appearance: none;
+        border: none;
+        padding: 0;
+        background: none;
+        color: var(--role-link);
+        font: inherit;
+        cursor: pointer;
+      }
+      .settingsall:hover { color: var(--vscode-textLink-activeForeground); text-decoration: underline; }
 
       #mode.iconbtn {
         width: auto;
@@ -1052,6 +1171,7 @@
     <div id="log">
       <div id="empty"></div>
     </div>
+    <div id="settings" hidden></div>
 
     <div id="todobar"></div>
 
@@ -1071,6 +1191,104 @@
       const { tell, ask, settleReply, unwrap } = Bridge.makeBridge((m) => vscode.postMessage(m));
       const proseOf = Bridge.proseOf;
       const log = document.getElementById('log');
+      const settingsEl = document.getElementById('settings');
+      let settingsState = null;
+      let modeSettingsValues = null;
+      let modeModels = null;
+      let modeModelsLoading = false;
+
+      function loadModeSettings() {
+        modeModelsLoading = true;
+        drawBar();
+        const settingsRequest = ask('agentSettings', {})
+          .then((values) => {
+            modeSettingsValues = values || null;
+            drawBar();
+          });
+        const modelsRequest = ask('agentModels', {})
+          .then((result) => {
+            modeModels = result && result.ok ? result.models : null;
+            modeModelsLoading = false;
+            drawBar();
+          })
+          .catch(() => {
+            modeModelsLoading = false;
+            modeModels = null;
+            drawBar();
+          });
+        return Promise.all([settingsRequest, modelsRequest]);
+      }
+
+      function setModeAgentSetting(key, value) {
+        return ask('agentSettingsSet', { key, value })
+          .then((result) => {
+            if (result && result.values) modeSettingsValues = result.values;
+            drawBar();
+            return result && result.values ? result.values : modeSettingsValues;
+          });
+      }
+
+      function closeSettingsPage() {
+        settingsState = null;
+        settingsEl.hidden = true;
+        log.hidden = false;
+        barEl.hidden = false;
+      }
+
+      function drawSettingsPage() {
+        if (!settingsState) return;
+        Bridge.renderInto(
+          settingsEl,
+          Bridge.node(Bridge.ui.Settings, {
+            values: {
+              subAgents: settingsState.values.subAgents,
+              subAgentModel: settingsState.values.subAgentModel,
+              subAgentThinkingEffort: settingsState.values.subAgentThinkingEffort,
+              subAgentCleanup: settingsState.values.subAgentCleanup,
+            },
+            models: settingsState.models,
+            loading: settingsState.loading,
+            cached: settingsState.cached,
+            t,
+            onBack: closeSettingsPage,
+            onOpenAll: () => ask('openAllSettings', {}).catch(() => {}),
+            onChange: (key, value) => ask('agentSettingsSet', { key, value })
+              .then((result) => {
+                if (!settingsState || !result || !result.values) return null;
+                settingsState.values = result.values;
+                drawSettingsPage();
+                return result.values;
+              })
+              .catch(() => null),
+          })
+        );
+      }
+
+      function openSettingsPage() {
+        log.hidden = true;
+        barEl.hidden = true;
+        settingsEl.hidden = false;
+        ask('agentSettings', {})
+          .then((values) => {
+            settingsState = { values, models: null, loading: true, cached: false };
+            drawSettingsPage();
+            return ask('agentModels', {});
+          })
+          .then((result) => {
+            if (!settingsState) return;
+            settingsState.loading = false;
+            settingsState.models = result && result.ok ? result.models : null;
+            settingsState.cached = !!(result && result.cached);
+            drawSettingsPage();
+          })
+          .catch(() => {
+            if (!settingsState) return;
+            settingsState.loading = false;
+            settingsState.models = null;
+            settingsState.cached = false;
+            drawSettingsPage();
+          });
+      }
 
       let stateEl = null;
       const whereEl = document.getElementById('where');
@@ -1649,6 +1867,50 @@
             thinkingLabel: t('mode.thinking'),
             thinkingNote: t('mode.thinking.d'),
             onThinking: setThinking,
+            onOpen: loadModeSettings,
+            model: modeSettingsValues && window.BridgeSettingsOptions ? (() => {
+              const options = window.BridgeSettingsOptions.modelOptions(
+                modeModels,
+                modeSettingsValues.model,
+                t
+              );
+              return {
+                value: modeSettingsValues.model,
+                label: t('settingsPage.modelLabel'),
+                options,
+                loading: modeModelsLoading,
+                loadingLabel: t('agentSettings.loadingList'),
+                legacyLabel: t('settingsPage.legacy'),
+                asTabLabel: t('agentSettings.asTab'),
+                onPick: (value) => {
+                  const levels = window.BridgeSettingsOptions
+                    .effortOptions(modeModels, value, '')
+                    .filter((option) => option && option.value);
+                  const currentEffort = modeSettingsValues && modeSettingsValues.thinkingEffort;
+                  setModeAgentSetting('model', value)
+                    .then(() => {
+                      if (currentEffort && !levels.some((option) => option.value === currentEffort)) {
+                        return setModeAgentSetting('thinkingEffort', '');
+                      }
+                      return null;
+                    })
+                    .catch(() => {});
+                },
+              };
+            })() : null,
+            effort: modeSettingsValues && window.BridgeSettingsOptions ? (() => {
+              const levels = window.BridgeSettingsOptions
+                .effortOptions(modeModels, modeSettingsValues.model, modeSettingsValues.thinkingEffort)
+                .filter((option) => option && option.value);
+              return levels.length ? {
+                value: modeSettingsValues.thinkingEffort,
+                levels,
+                label: t('settingsPage.effortLabel'),
+                labelFor: (value) => t('settingsPage.effort.' + value),
+                asTabInlineLabel: t('settingsPage.effort.asTab'),
+                onPick: (value) => setModeAgentSetting('thinkingEffort', value).catch(() => {}),
+              } : null;
+            })() : null,
           },
 
           addContext: {
@@ -2060,7 +2322,9 @@
         const env = ev.data;
         if (settleReply(env)) return;
         const m = unwrap(env);
-        if (m.type === 'model') {
+        if (m.type === 'openSettings') {
+          openSettingsPage();
+        } else if (m.type === 'model') {
 
           modelEl.textContent = m.text || '';
           modelEl.title = m.text || '';

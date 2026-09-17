@@ -43,8 +43,24 @@
 開啟存起來的對話、匯出、匯入、把提示排到之後再跑。
 它也能把橋自己的規則寫進 ChatGPT 專案的指示欄。
 
-**它能分工。**子代理最多同時兩個（`subAgents`，預設 2），各自有自己的 ChatGPT 分頁，
-所以查資料和建置可以並行，主對話不會被卡住。
+**它能分工。**子代理最多同時四個（`subAgents`，預設 2），各自在一個小小的 ChatGPT 視窗裡跑，
+所以查資料和建置可以並行，主對話不會被卡住。用完的子代理對話預設會在 ChatGPT 裡封存，
+對話紀錄不會越堆越亂（`subAgentCleanup`）。
+
+**不用離開編輯器就能選模型和思考量。**打開輸入框下方的模式按鈕，會列出你的方案實際能選的模型
+（直接從 ChatGPT 讀取，所以 Go 和 Business 看到的不一樣），還有思考量的滑桿。
+子代理可以在面板上方齒輪打開的設定頁另外選，讓主代理想得深一點，
+只負責讀檔的子代理用 Instant 快速回答。
+
+<p align="center">
+  <img src="media/models-zh-tw.png" width="420"
+       alt="打開模式選單的樣子：四種模式下方是模型清單（Instant、Thinking、Pro，舊版模型收起來），以及設在「高」的思考量滑桿。">
+  &nbsp;
+  <img src="media/settings-zh-tw.png" width="420"
+       alt="子代理設定頁：數量（0 到 4 的按鈕）、模型、思考量，以及用完的對話怎麼處理。">
+  <br>
+  <sub>*主代理在模式選單選，子代理在設定頁選。*</sub>
+</p>
 
 **它能操作瀏覽器**——不是你平常用的那個。它跑在另外的設定檔上，**而且這是程式在擋的**：
 碰除錯埠之前，它會先讀出握著那個埠的行程，確認跑在隔離設定檔上才連。
@@ -170,7 +186,12 @@ npm run package:chrome   # → hadome-chrome-<版本>.zip
 | `preventDoneWithOpenTodos` | `true` | 待辦還沒做完就不讓它結束 |
 | `maxTurns` | `0` | 跑 N 回合就停（`0` 表示不限） |
 | `contextWindow` | `0` | 覆寫假設的脈絡長度 |
-| `subAgents` | `2` | 同時可以跑幾個子 agent |
+| `subAgents` | `2` | 同時可以跑幾個子 agent（0～4） |
+| `model` | `""` | 主代理的模型（空白 = 沿用 ChatGPT 分頁上選的） |
+| `thinkingEffort` | `""` | 主代理的思考量（`min` / `standard` / `extended` / `max`） |
+| `subAgentModel` | `""` | 只給子代理用的模型 |
+| `subAgentThinkingEffort` | `""` | 只給子代理用的思考量 |
+| `subAgentCleanup` | `archive-success` | 用完的子代理對話：`archive-success` / `archive-all` / `delete-success`（無法復原）/ `none` |
 | `subPortBase` | `8810` | 子 agent 分頁用的第一個連接埠 |
 | `restartGapSeconds` | `20` | 重開對話前要等的秒數 |
 | `loadGlobalRules` | `true` | 讀取你的全域規則 |
