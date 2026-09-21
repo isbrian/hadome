@@ -8,9 +8,38 @@ const LOCK_DIR = process.env.CHATGPT_BRIDGE_PORTS_DIR
   : path.join(os.homedir(), '.chatgpt-bridge', 'ports');
 
 const PORT_FROM = 8765;
-const PORT_TO = PORT_FROM;
+const PORT_TO = 8771;
 
 const RESERVED = new Set([8767, 8768, 8769]);
+
+const SUB_BLOCK = 4;
+
+const CDP_BASE = 9444;
+
+function mainPorts() {
+  const out = [];
+  for (let p = PORT_FROM; p <= PORT_TO; p += 1) if (!RESERVED.has(p)) out.push(p);
+  return out;
+}
+
+function slotIndexOf(port) {
+  return mainPorts().indexOf(Number(port));
+}
+
+function subBaseFor(port, subPortBase) {
+  const at = slotIndexOf(port);
+  return at < 0 ? subPortBase : subPortBase + at * SUB_BLOCK;
+}
+
+function cdpFor(port) {
+  const at = slotIndexOf(port);
+  return at < 0 ? CDP_BASE : CDP_BASE + at;
+}
+
+function profileSuffixFor(port) {
+  const at = slotIndexOf(port);
+  return at > 0 ? `-${at}` : '';
+}
 
 function lockPath(port) {
   return path.join(LOCK_DIR, `${port}.json`);
@@ -113,6 +142,59 @@ function listLocks() {
   return out.sort((a, b) => a.port - b.port);
 }
 
+const SLOTS_FILE = 'slots.json';
+
+function slotsPath() {
+  return path.join(LOCK_DIR, SLOTS_FILE);
+}
+
+function readSlots() {
+  try {
+    const o = JSON.parse(fs.readFileSync(slotsPath(), 'utf8'));
+    return o && typeof o === 'object' ? o : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeSlots(map) {
+  try {
+    fs.mkdirSync(LOCK_DIR, { recursive: true });
+    fs.writeFileSync(slotsPath(), JSON.stringify(map, null, 2));
+    return true;
+  } catch {
+
+    return false;
+  }
+}
+
+function heldMainPorts() {
+  return listLocks().filter((l) => slotIndexOf(l.port) >= 0);
+}
+
+function leasePort(workspace) {
+  const key = String(workspace || '').normalize('NFC');
+  const held = heldMainPorts();
+  const taken = new Set(held.map((l) => l.port));
+  const free = mainPorts().filter((p) => !taken.has(p));
+
+  const want = Number(readSlots()[key]);
+  const port = free.includes(want) ? want : free[0];
+  if (port === undefined) return { port: null, holders: held };
+  rememberPort(key, port);
+  return { port, holders: held };
+}
+
+function rememberPort(workspace, port) {
+  const key = String(workspace || '').normalize('NFC');
+  if (!key || slotIndexOf(port) < 0) return false;
+  const map = readSlots();
+
+  if (mainPorts().includes(Number(map[key]))) return true;
+  map[key] = port;
+  return writeSlots(map);
+}
+
 const CLAIM_FILE = 'claim.json';
 
 const CLAIM_TTL_MS = 45000;
@@ -181,6 +263,17 @@ module.exports = {
   PORT_FROM,
   PORT_TO,
   RESERVED,
+  SUB_BLOCK,
+  CDP_BASE,
+  mainPorts,
+  slotIndexOf,
+  subBaseFor,
+  cdpFor,
+  profileSuffixFor,
+  slotsPath,
+  heldMainPorts,
+  leasePort,
+  rememberPort,
   lockPath,
   holderOf,
   readLock,

@@ -216,6 +216,11 @@
         "category": "%extension.displayName%"
       },
       {
+        "command": "chatgptBridge.pairTab",
+        "title": "%command.pairTab.title%",
+        "category": "%extension.displayName%"
+      },
+      {
         "command": "chatgptBridge.importChat",
         "title": "%command.importChat.title%",
         "category": "%extension.displayName%"

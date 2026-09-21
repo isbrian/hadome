@@ -5,7 +5,13 @@ const WebSocket = require('ws');
 
 const pw = require('./pwpage');
 
-const PORT = Number(process.env.BRIDGE_BROWSER_PORT || 9444);
+let PORT = Number(process.env.BRIDGE_BROWSER_PORT || 9444);
+
+let 席 = 0;
+
+let 席の尾 = '';
+
+let 席の主 = '';
 
 const OWN = new Set(['https://chatgpt.com', 'https://chat.openai.com']);
 
@@ -25,12 +31,20 @@ function isOwnSite(u) {
 
 function 隔離した設定ファイルの道() {
   return (
-    process.env.BRIDGE_BROWSER_PROFILE ||
-    path.join(process.env.HOME || '', 'Library/Application Support/chatgpt-bridge-canary')
+    (process.env.BRIDGE_BROWSER_PROFILE ||
+      path.join(process.env.HOME || '', 'Library/Application Support/chatgpt-bridge-canary')) + 席の尾
   );
 }
 
 const 確かめた口 = new Map();
+
+function 枠を決める({ port, slot, suffix, workspace } = {}) {
+  if (!process.env.BRIDGE_BROWSER_PORT && Number(port)) PORT = Number(port);
+  席 = Number(slot) > 0 ? Number(slot) : 0;
+  席の尾 = String(suffix || '');
+  席の主 = String(workspace || '');
+  確かめた口.clear();
+}
 
 const 空 = '空';
 const 読めない = '読めない';
@@ -180,6 +194,8 @@ async function 起こす(port = PORT) {
       const r = 台帳.起こした('browser', 子.pid, `${実行檔} --remote-debugging-port=${port}`, {
         設定ファイル: 隔離した設定ファイルの道(),
         枠: port,
+        席,
+        持ち主: 席の主,
         起こした所: 'src/browser.js',
         呼び手,
       });
@@ -524,4 +540,4 @@ async function close(targetId, { port = PORT } = {}) {
 
 const 手を離す = () => require('./pwpage').手を離す();
 
-module.exports = { PORT, originOf, isOwnSite, open, read, click, set, shot, type, scroll, fetchBytes, close, evaluate, targetOf, KEYS, 窓を出させる, 用意する, 手を離す };
+module.exports = { originOf, isOwnSite, open, read, click, set, shot, type, scroll, fetchBytes, close, evaluate, targetOf, KEYS, 窓を出させる, 用意する, 手を離す, 枠を決める, 口: () => PORT, 設定ファイルの道: 隔離した設定ファイルの道 };

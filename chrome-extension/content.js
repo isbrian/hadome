@@ -32,22 +32,6 @@
   const SKIP = [8767, 8768, 8769];
   let pinned = pinnedPort();
 
-  let pinnedFallback = 0;
-  let scanningAfterPinnedFailure = false;
-  function clearPinnedPort() {
-    pinned = 0;
-    pinnedFallback = 0;
-    scanningAfterPinnedFailure = false;
-    try {
-      sessionStorage.removeItem(PIN_KEY);
-    } catch {
-
-    }
-  }
-
-  let pinnedFailures = 0;
-  const PINNED_FAILURE_LIMIT = 3;
-
   let kept = 0;
   try {
     const v = sessionStorage.getItem(PORT_KEY);
@@ -69,7 +53,7 @@
     return tryPort;
   }
 
-  const TAB_PROTOCOL = 60;
+  const TAB_PROTOCOL = 61;
 
   const STILL_WRITING_WAIT_MS = 300000;
 
@@ -225,19 +209,10 @@
       if (!everHello) {
 
         if (pinned) {
-          pinnedFailures += 1;
-          if (pinnedFailures >= PINNED_FAILURE_LIMIT) {
 
-            pinnedFallback = pinned;
-            pinned = 0;
-            scanningAfterPinnedFailure = true;
-            pinnedFailures = 0;
-          }
-        } else if (scanningAfterPinnedFailure && pinnedFallback) {
-
-          pinned = pinnedFallback;
-          pinnedFallback = 0;
-          scanningAfterPinnedFailure = false;
+          console.log(`[bridge] このタブは枠 ${pinned} と組んでいます。その橋が立つまで待ちます`);
+          setTimeout(connect, restMs());
+          return;
         }
         nextPort();
 
@@ -253,13 +228,7 @@
       if (stayed >= STAY_TRIES) {
         stayed = 0;
         everHello = false;
-        if (pinned) {
 
-          pinnedFallback = pinned;
-          pinned = 0;
-          scanningAfterPinnedFailure = true;
-          pinnedFailures = 0;
-        }
         nextPort();
       }
       setTimeout(connect, RECONNECT_MS);
@@ -281,7 +250,6 @@
         clearTimeout(welcomeTimer);
         everHello = true;
         stayed = 0;
-        pinnedFailures = 0;
         searched = 0;
 
         restReset();

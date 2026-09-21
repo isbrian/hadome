@@ -9,6 +9,7 @@ const { describeUsage } = require('./src/usage');
 const os = require('os');
 const fs = require('fs');
 const { openBridge, HEAP_WARN_MB } = require('./src/bridge');
+const portlock = require('./src/portlock');
 
 const { projectInstructions } = require('./src/projectrules');
 const { runAgent, toolStateOf } = require('./src/agent');
@@ -249,10 +250,43 @@ function pickWorkspace() {
   return folders[0].uri.fsPath;
 }
 
+let seatPort = 0;
+
+let 席は自動 = true;
+
+function portNow(c) {
+  const i = c.inspect('port');
+  const 指されている =
+    i &&
+    (i.workspaceFolderValue !== undefined ||
+      i.workspaceValue !== undefined ||
+      i.globalValue !== undefined);
+  if (指されている) return c.get('port', portlock.PORT_FROM);
+  return seatPort || portlock.PORT_FROM;
+}
+
+function takeSeat() {
+  const c = vscode.workspace.getConfiguration('chatgptBridge');
+  const i = c.inspect('port');
+  if (i && (i.workspaceFolderValue !== undefined || i.workspaceValue !== undefined || i.globalValue !== undefined)) {
+    席は自動 = false;
+    log(`[席] 設定で ${c.get('port', portlock.PORT_FROM)} が指されています。席は取りません`);
+    return;
+  }
+  const r = portlock.leasePort(pickWorkspace() || '');
+  if (r.port === null) {
+    const 並び = r.holders.map((h) => `${h.port}（${h.workspace || '場所は不明'}）`).join('\n  ');
+    log(`[席] 空いている席がありません:\n  ${並び}`);
+    return;
+  }
+  seatPort = r.port;
+  log(`[席] ${seatPort} 番の席を取りました（${pickWorkspace() || '場所は不明'}）`);
+}
+
 function settings() {
   const c = vscode.workspace.getConfiguration('chatgptBridge');
   return {
-    port: c.get('port', 8765),
+    port: portNow(c),
     allowlist: c.get('allowlist', DEFAULT_ALLOWLIST),
 
     denylist: mergeDenylist(c.get('denylist', [])),
@@ -367,16 +401,53 @@ function projectHomeOf(url) {
   return m ? `${m[1]}/project` : '';
 }
 
-async function ensureBridge(s, port) {
+const PAIRED_KEY = 'chatgptBridge.pairedTab';
+
+function pairedFor() {
+  try {
+    if (store && store.get(PAIRED_KEY, false)) return true;
+  } catch {
+
+  }
+
+  return settings().port !== portlock.PORT_FROM;
+}
+
+function 次の空き席(試した) {
+  const taken = new Set(portlock.heldMainPorts().map((h) => h.port));
+  for (const p of 試した) taken.add(Number(p));
+  return portlock.mainPorts().find((p) => !taken.has(p));
+}
+
+function 席に合わせる(port, s) {
+  const at = portlock.slotIndexOf(port);
+  if (at < 0) return;
+  portlock.rememberPort(pickWorkspace() || '', port);
+  try {
+    require('./src/browser').枠を決める({
+      port: portlock.cdpFor(port),
+      slot: at,
+      suffix: portlock.profileSuffixFor(port),
+      workspace: pickWorkspace() || '',
+    });
+  } catch (e) {
+    log(`[席] browser を席に合わせられません（${e.message}）`);
+  }
+  if (s) s.seat = at;
+}
+
+async function ensureBridge(s, port, { waitTab = true, 試した = new Set() } = {}) {
   if (s.bridge) return true;
+  試した.add(Number(port));
   let tabHeavyWarned = false;
-  post({ type: 'note', text: t('note.waitingTab') });
   try {
     s.bridge = await openBridge({
       port,
       onLog: log,
 
       workspace: pickWorkspace() || '',
+
+      paired: pairedFor,
 
       t: (k, v) => t(k, v),
 
@@ -408,6 +479,12 @@ async function ensureBridge(s, port) {
       },
     });
 
+    席に合わせる(s.bridge.port, s);
+
+    if (!waitTab) return true;
+
+    post({ type: 'note', text: t('note.waitingTab', { port: s.bridge.port }) });
+
     await s.bridge.waitForTab();
 
     const home =
@@ -429,22 +506,37 @@ async function ensureBridge(s, port) {
       s.started = true;
 
       log(`[bridge] 続きとみなしました（決まりの指紋 ${rulesNow}）`);
-      post({ type: 'note', text: t('note.tabResumed') });
+      post({ type: 'note', text: t('note.tabResumed', { port: s.bridge.port }) });
     } else {
 
       s.started = false;
 
       dropCarriedTabs(s);
-      post({ type: 'note', text: t('note.tabConnected') });
+      post({ type: 'note', text: t('note.tabConnected', { port: s.bridge.port }) });
     }
     return true;
   } catch (e) {
-    log(`[失敗] ${e.message}`);
     try {
       if (s.bridge) s.bridge.close();
     } catch {}
     s.bridge = null;
-    post({ type: 'error', text: e.message });
+
+    const 次 = e && e.portBusy && 席は自動 ? 次の空き席(試した) : undefined;
+    if (次 !== undefined) {
+      log(`[席] ${port} は塞がっています。${次} 番の席へ移ります`);
+      seatPort = 次;
+      return ensureBridge(s, 次, { waitTab, 試した });
+    }
+    const 満席 =
+      e && e.portBusy && 席は自動
+        ? portlock
+            .heldMainPorts()
+            .map((h) => `  ${h.port}: ${h.workspace || t('br.unknownWhere')}`)
+            .join('\n')
+        : '';
+    const text = 満席 ? `${e.message}\n\n${t('seat.allTaken')}\n${満席}` : e.message;
+    log(`[失敗] ${text}`);
+    post({ type: 'error', text });
     return false;
   }
 }
@@ -506,7 +598,8 @@ function loadGlobal(root) {
 function makeSpawner(s, opts) {
   const { maxTurns, protectSecrets } = opts;
   const pool = makePool({
-    base: settings().subPortBase,
+
+    base: portlock.subBaseFor(s.bridge ? s.bridge.port : settings().port, settings().subPortBase),
     max: settings().subAgents,
 
     openTab: async (port) => {
@@ -514,7 +607,7 @@ function makeSpawner(s, opts) {
       await s.bridge.openTabFor(port);
     },
     openBridge: async (port) => {
-      const b = await openBridge({ port, onLog: log, t: (k, v) => t(k, v) });
+      const b = await openBridge({ port, onLog: log, paired: true, t: (k, v) => t(k, v) });
       await b.waitForTab();
 
       const projectUrl =
@@ -604,7 +697,8 @@ function makeSpawner(s, opts) {
       if (cleanupMode === 'archive-all' || (cleanupMode === 'archive-success' && r.status === 'done')) cleanupAction = 'archive';
       if (cleanupMode === 'delete-success' && r.status === 'done') cleanupAction = 'delete';
       if (cleanupAction && bridge && typeof bridge.cleanupConversation === 'function') {
-        const cleanupPort = settings().subPortBase + at - 1;
+        const cleanupPort =
+          portlock.subBaseFor(s.bridge ? s.bridge.port : settings().port, settings().subPortBase) + at - 1;
         try {
           const cleaned = await bridge.cleanupConversation(cleanupAction);
           if (cleaned && cleaned.ok) {
@@ -3513,6 +3607,31 @@ async function disconnectTab() {
   post({ type: 'note', text: ok ? t('conn.cut') : t('conn.cutFailed') });
 }
 
+async function pairTab() {
+  const s = ensureSession();
+  if (!s) return;
+
+  try {
+    await store.update(PAIRED_KEY, true);
+  } catch {
+
+  }
+
+  if (!(await ensureBridge(s, settings().port, { waitTab: false }))) return;
+
+  const url = s.bridge.pairUrl();
+  let opened = false;
+  try {
+    opened = await vscode.env.openExternal(vscode.Uri.parse(url));
+  } catch {
+    opened = false;
+  }
+  post({
+    type: 'note',
+    text: opened ? t('pair.opened', { port: s.bridge.port }) : t('pair.failed', { url }),
+  });
+}
+
 async function reconnectTab() {
   if (!session || !session.bridge) {
     post({ type: 'note', text: t('conn.none') });
@@ -3705,6 +3824,8 @@ function activate(context) {
   channel = vscode.window.createOutputChannel(t('app.title'));
   context.subscriptions.push(channel);
 
+  takeSeat();
+
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (!e.affectsConfiguration('chatgptBridge.language')) return;
@@ -3838,6 +3959,7 @@ function activate(context) {
     vscode.commands.registerCommand('chatgptBridge.importChat', importChat),
     vscode.commands.registerCommand('chatgptBridge.disconnectTab', disconnectTab),
     vscode.commands.registerCommand('chatgptBridge.reconnectTab', reconnectTab),
+    vscode.commands.registerCommand('chatgptBridge.pairTab', pairTab),
 
     vscode.commands.registerCommand('chatgptBridge.openChromeExtension', () =>
       vscode.env.openExternal(vscode.Uri.file(path.join(__dirname, 'chrome-extension')))

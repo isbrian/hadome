@@ -20,7 +20,7 @@ const ENTRY_RENDER_WAIT_MS = 15000;
 
 const RELOAD_WAIT_MS = 15000;
 
-const EXPECTED_TAB_PROTOCOL = 60;
+const EXPECTED_TAB_PROTOCOL = 61;
 
 const portlock = require('./portlock');
 
@@ -135,8 +135,12 @@ function openBridge({
   t: tIn = null,
 
   workspace = '',
+
+  paired = false,
 } = {}) {
   const t = (k, v) => (tIn ? tIn(k, v) : JA_FALLBACK[k](v || {}));
+
+  const isPaired = () => (typeof paired === 'function' ? !!paired() : !!paired);
   return new Promise((resolve, reject) => {
     let server;
 
@@ -270,7 +274,9 @@ function openBridge({
             (pub && pub.workspace ? '\n' + t('br.heldWhere', { where: pub.workspace }) : '') +
             '\n' + t('br.howToFind', { port: openedPort }) +
             (roam ? '\n' + t('br.noFreePort', { from: portlock.PORT_FROM, to: portlock.PORT_TO }) : '');
-          reject(new Error(t('br.portBusy', { port: openedPort }) + detail));
+          const busy = new Error(t('br.portBusy', { port: openedPort }) + detail);
+          busy.portBusy = true;
+          reject(busy);
           return;
         }
         reject(new Error(t('br.serverError', { why: e.message })));
@@ -671,6 +677,8 @@ function openBridge({
     let claimTimer = null;
     function pollClaim() {
       if (closed) return;
+
+      if (isPaired()) return;
       let c = null;
       try {
         c = portlock.readClaim();
@@ -724,7 +732,9 @@ function openBridge({
 
     function liveOthers() {
       try {
-        return portlock.listLocks().filter((l) => l.port !== openedPort);
+        return portlock
+          .listLocks()
+          .filter((l) => l.port !== openedPort && portlock.slotIndexOf(l.port) >= 0);
       } catch {
         return [];
       }
@@ -767,6 +777,8 @@ function openBridge({
 
         const askTimer = setTimeout(() => {
           if (sock && tabProtocol) return;
+
+          if (isPaired()) return;
           const others = liveOthers();
           if (!others.length) return;
           onLog(
@@ -1051,7 +1063,7 @@ function openBridge({
       const target = sock;
       try {
 
-        target.send(JSON.stringify({ type: 'close_tab', port }));
+        target.send(JSON.stringify({ type: 'close_tab', port: openedPort }));
       } catch {
         return Promise.resolve(false);
       }
@@ -1389,6 +1401,8 @@ function openBridge({
       createProject,
       openTabFor,
       retireTab,
+
+      pairUrl: () => 'https://chatgpt.com/?bridge_port=' + openedPort,
 
       reloadTab,
       limits: () => lastLimits,
