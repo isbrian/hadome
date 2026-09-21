@@ -56,7 +56,8 @@ rtk proxy git show a675cfb -- test/portlock.test.js                          # �
 | T-006 | ✅ 完成 | 實作 | 等分頁時主動提示配對 | `note.pairHint`，8 秒後才提示；報告見 `report/T-006_*_執行報告.md`（commit `175779d`） | 0 | - |
 | T-007 | ✅ 完成 | 文件 | README ×3 補多開章節 | 三語各加一節 + 同版警告；報告見 `report/T-007_*_執行報告.md`（commit `fe6ab02`） | 0 | - |
 | T-008 | ⏸️ 暫停 | 實作 | 人工端對端驗收 | 9 項中已自動驗證 1 項、部分 2 項、待人工 7 項；詳見 `report/T-008_*_分析報告.md` 與 `test/seat-check.js` | 0 | 等待人工決策 |
-| T-009 | ⏸️ 暫停 | 實作 | commit + PR 回 develop | commit 已完成（`f92c400` / `175779d` / `fe6ab02`），PR 依使用者指示先不開，且排在 T-008 之後 | 0 | 等待人工決策 |
+| T-009 | ⏸️ 暫停 | 實作 | commit（PR 不做） | commit 全部完成；**使用者 2026-09-22 明確指示「不跑 PR，在分支中完成」**，合併時機由使用者自行決定 | 0 | 等待人工決策 |
+| T-010 | ✅ 完成 | 實作 | 分支自我審查（code-review） | verdict `warn`（0 fail / 2 warn / 3 info）；2 warn + 1 info 已修（commit `22a74b4`），報告見 `report/T-010_*_審查報告.md` | 0 | - |
 
 ---
 
