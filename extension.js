@@ -410,7 +410,7 @@ function pairedFor() {
 
   }
 
-  return settings().port !== portlock.PORT_FROM;
+  return portNow(vscode.workspace.getConfiguration('chatgptBridge')) !== portlock.PORT_FROM;
 }
 
 function 次の空き席(試した) {
@@ -419,7 +419,7 @@ function 次の空き席(試した) {
   return portlock.mainPorts().find((p) => !taken.has(p));
 }
 
-function 席に合わせる(port, s) {
+function 席に合わせる(port) {
   const at = portlock.slotIndexOf(port);
   if (at < 0) return;
   portlock.rememberPort(pickWorkspace() || '', port);
@@ -433,7 +433,6 @@ function 席に合わせる(port, s) {
   } catch (e) {
     log(`[席] browser を席に合わせられません（${e.message}）`);
   }
-  if (s) s.seat = at;
 }
 
 const PAIR_HINT_MS = 8000;
@@ -481,7 +480,7 @@ async function ensureBridge(s, port, { waitTab = true, 試した = new Set() } =
       },
     });
 
-    席に合わせる(s.bridge.port, s);
+    席に合わせる(s.bridge.port);
 
     if (!waitTab) return true;
 

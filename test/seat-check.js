@@ -39,10 +39,12 @@ function 空いている席(要る) {
 
   const 席 = 空いている席(3);
   if (席.length < 3) {
-    console.log(`\n空いている席が ${席.length} つしかありません（要る数: 3）。`);
+    console.log(`\n空いている席が ${席.length} つしかありません（要る数: 3）。何も試していません。`);
     console.log('他の hadome を閉じてから、もう一度走らせてください。');
+
+    // 0 で出ると「通った」と見分けが付かない。飛ばした事が判る様に 77 で出る。
     fs.rmSync(臨時, { recursive: true, force: true });
-    process.exit(0);
+    process.exit(77);
   }
   const [枠A, 枠B, 枠C] = 席;
   console.log(`使う席: A=${枠A} B=${枠B} C=${枠C}\n`);
