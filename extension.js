@@ -436,6 +436,8 @@ function 席に合わせる(port, s) {
   if (s) s.seat = at;
 }
 
+const PAIR_HINT_MS = 8000;
+
 async function ensureBridge(s, port, { waitTab = true, 試した = new Set() } = {}) {
   if (s.bridge) return true;
   試した.add(Number(port));
@@ -485,7 +487,20 @@ async function ensureBridge(s, port, { waitTab = true, 試した = new Set() } =
 
     post({ type: 'note', text: t('note.waitingTab', { port: s.bridge.port }) });
 
-    await s.bridge.waitForTab();
+    const 誘い =
+      portlock.slotIndexOf(s.bridge.port) > 0
+        ? setTimeout(() => {
+            post({
+              type: 'note',
+              text: t('note.pairHint', { port: s.bridge.port, url: s.bridge.pairUrl() }),
+            });
+          }, PAIR_HINT_MS)
+        : 0;
+    try {
+      await s.bridge.waitForTab();
+    } finally {
+      clearTimeout(誘い);
+    }
 
     const home =
       s.projectUrl || settings().projectUrl || projectHomeOf((current && current.conversationUrl) || '');

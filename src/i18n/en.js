@@ -248,6 +248,9 @@ module.exports = {
   'note.gitFailed': "Couldn't start git: {why}",
   'note.waitingTab': 'Waiting for the target tab… (this window holds port {port})',
   'note.tabResumed': 'Reconnected to the previous conversation. The rules were not resent. (port {port})',
+  'note.pairHint':
+    'Still not connected. This window is on port {port}, but a plain chatgpt.com tab only ever looks for port 8765. ' +
+    'Run "Open a Tab Paired with This Window", or open {url} yourself.',
   'pair.opened':
     'Opened a tab paired with this window (port {port}). That tab only talks to this window; no other window can take it.',
   'pair.failed': "Couldn't open your browser. Open this address yourself: {url}",

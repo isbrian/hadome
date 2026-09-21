@@ -251,6 +251,9 @@ module.exports = {
   'note.waitingTab': '対象タブを待っています…（この窓の枠 {port}）',
   'note.tabResumed': '前の対話につながりました。決まりは送り直しません。（枠 {port}）',
   'note.tabConnected': '対象タブにつながりました（枠 {port}）',
+  'note.pairHint':
+    'まだ繋がりません。この窓は枠 {port} ですが、普通の chatgpt.com のタブは枠 8765 しか見に行きません。' +
+    '「この窓と組むタブを開く」を実行するか、ご自分で {url} を開いてください。',
   'pair.opened': 'この窓と組むタブを開きました（枠 {port}）。そのタブはこの窓だけにつながり、他の窓には取られません。',
   'pair.failed': 'ブラウザを開けませんでした。この場所をご自分で開いてください: {url}',
   'seat.allTaken': 'いま席を持っている窓:',

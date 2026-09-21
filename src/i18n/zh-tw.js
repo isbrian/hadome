@@ -245,6 +245,9 @@ module.exports = {
   'note.waitingTab': '正在等待目標分頁…（本視窗的連接埠 {port}）',
   'note.tabResumed': '已接回先前的對話，規則不會重送。（連接埠 {port}）',
   'note.tabConnected': '已連上目標分頁（連接埠 {port}）',
+  'note.pairHint':
+    '還沒連上。本視窗在連接埠 {port}，但一般的 chatgpt.com 分頁只會去找 8765。' +
+    '請執行「開一個與本視窗配對的分頁」，或自己開啟 {url}。',
   'pair.opened': '已開出與本視窗配對的分頁（連接埠 {port}）。那個分頁只會連這個視窗，不會被別的視窗搶走。',
   'pair.failed': '開不了瀏覽器。請自己開這個網址：{url}',
   'seat.allTaken': '目前占著席位的視窗：',
