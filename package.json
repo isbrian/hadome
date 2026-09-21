@@ -763,6 +763,7 @@
   },
   "scripts": {
     "build": "node tools/build-webview.js",
+    "test": "node test/seat-check.js",
     "build:prod": "node tools/build-webview.js --production",
     "watch": "node tools/build-webview.js --watch",
     "prepare": "node tools/build-webview.js && node tools/install-git-hooks.js",

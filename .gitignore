@@ -14,7 +14,9 @@ prior-art/
 
 .vv/
 
-# 開發側路徑一律不進版控（原本已追蹤的 41 檔以 git rm --cached 解除，檔案仍留在工作樹）
+# 開發側路徑不進版控（2026-09-15 把原本已追蹤的 41 檔以 git rm --cached 解除，檔案仍留在工作樹）
+# 2026-09-22 起 todo/ report/ test/ 三者改為追蹤——派工單、任務報告、回歸測試要能跟著分支走，
+# 換機器或換接手者時看得到。其餘開發側路徑維持不進版控。
 .claude/
 .github/
 .orchestration/
@@ -22,8 +24,5 @@ _claude/
 CLAUDE.md
 docs/
 openspec/
-report/
 reports/
 skills/
-test/
-todo/
