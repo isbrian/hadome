@@ -96,12 +96,22 @@ rtk proxy git show a675cfb -- README.zh-TW.md
 
 **這一項無法由 AI 代跑**——需要真人在本機裝兩份擴充、開兩個編輯器視窗、看瀏覽器分頁。逐項做完並記錄結果。
 
-先建置與安裝：
+**產物已經建好了（2026-09-22，版本 `0.1.20.1`），不用重跑打包**：
 
-```bash
-npm run build && npm run package:chrome
-# 到 chrome://extensions 重新載入擴充，chatgpt.com 分頁也要重載
+| 產物 | 驗證過的事 |
+|------|-----------|
+| `hadome-0.1.20.1.vsix` | VSIX 內部版本 `0.1.20-1`、`pairTab` 已註冊、席位程式碼在內、協定 61、`todo/` `report/` `test/` 未被打包 |
+| `hadome-chrome-0.61.0-3.zip` | manifest 0.61.0 與工作樹一致、只有 4 檔、content.js 協定 61 |
+
+安裝：
+
+```text
+編輯器 → 擴充功能 → … → 從 VSIX 安裝… → hadome-0.1.20.1.vsix
+chrome://extensions → 重新載入擴充（指向 hadome-chrome-0.61.0-3.zip 解壓後的資料夾）
+chatgpt.com 分頁也要重載 ← 協定 60→61，只做前一半不夠
 ```
+
+要重建的話：`npm run package`（會連帶重建 Chrome ZIP，檔名自動加尾碼不覆蓋舊檔）。
 
 | # | 驗收項 | 判定 |
 |---|--------|------|
