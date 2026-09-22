@@ -115,17 +115,18 @@ chatgpt.com 分頁也要重載 ← 協定 60→61，只做前一半不夠
 
 | # | 驗收項 | 判定 |
 |---|--------|------|
-| 1 | **slot 0 回歸**（最重要） | 只開一個專案視窗 → 面板在 8765 連上**既有的**普通 chatgpt.com 分頁，不需要任何 URL 參數 |
-| 2 | slot 0 子代理 | 跑一次含 2 個子代理的任務 → 子分頁開在 8810/8811 |
-| 3 | slot 0 瀏覽器 | `browser` 工具開一頁 → 仍用 9444 與原 profile（**登入狀態還在**） |
-| 4 | 多開 | 再開第二個專案視窗 → 報「在 8766 等分頁」→ 執行「開一個與本視窗配對的分頁」→ 分頁連上。`rtk proxy lsof -nP -iTCP:8765,8766 -sTCP:LISTEN` 各一個 listener；`ls ~/.chatgpt-bridge/ports/` 有 `8765.json`、`8766.json`、`slots.json` |
-| 5 | **不互搶** | 兩視窗都連好 → 關掉第二視窗的分頁 → 等超過 5 秒（`CLAIM_AFTER_MS`）→ 第一視窗的分頁**必須不動**，且 `~/.chatgpt-bridge/ports/claim.json` 不該出現 |
-| 6 | **不漂移** | 第二視窗的分頁留著、關掉第二個編輯器視窗 → 該分頁 console 應持續重試 8766 並退避，**不得**跑去接 8765 |
-| 7 | 子代理不撞 | 兩視窗同時各跑 2 個子代理 → 子分頁分別在 8810/8811 與 8814/8815，四份結果都回得來 |
+| 1 | **slot 0 回歸**（最重要） | 只開一個專案視窗 → 面板在 8765 連上**既有的**普通 chatgpt.com 分頁，不需要任何 URL 參數<br />＃OK |
+| 2 | slot 0 子代理 | 跑一次含 2 個子代理的任務 → 子分頁開在 8810/8811<br />＃有瑕疵<br />＃已實際執行 1 次包含 2 個子代理的任務。兩個子代理都有被建立，但兩者皆因上游回傳 404 而失敗，未取得子代理結果；另外也驗證了本機 127.0.0.1:8810 無法連線，因此目前無法確認 8810/8811 子分頁有成功開啟。這次結果應視為「已觸發 2 個子代理，但子分頁/服務未成功啟用」。<br />＃已完成一次含 2 個子代理、且未指定任何子分頁 port 的任務測試。兩個子代理都有實際啟動；子代理 1 成功完成 web/ 前端唯讀盤點，確認 React 19 + TypeScript + Vite + Ant Design + Playwright 等架構；子代理 2 在執行 api/ 後端盤點時遭遇上游 404（cf-ray=a3f161c95ce3db55-TPE）而失敗。此次未設定 8810/8811 或任何固定 port，且未修改任何專案檔案。 |
+| 3 | slot 0 瀏覽器 | `browser` 工具開一頁 → 仍用 9444 與原 profile（**登入狀態還在**）<br />＃ＯＫ<br />＃已完成 browser 工具開頁測試：成功開啟 https://example.com/，取得 tab=16470603A512AFDE98232C0961267B13，並透過 browser_read 成功讀到 Example Domain 內容，確認分頁可正常操作。此次沿用既有 browser 工作階段；工具回傳本身未另外顯示 9444 port 或 profile 路徑，因此這兩項沒有額外獨立驗證。 |
+| 4 | 多開 | 再開第二個專案視窗 → 報「在 8766 等分頁」→ 執行「開一個與本視窗配對的分頁」→ 分頁連上。`rtk proxy lsof -nP -iTCP:8765,8766 -sTCP:LISTEN` 各一個 listener；`ls ~/.chatgpt-bridge/ports/` 有 `8765.json`、`8766.json`、`slots.json`<br />＃ＯＫ<br />VSCodium  57031 brian   33u  IPv4 0x4ff378c1a735d467      0t0  TCP 127.0.0.1:8765 (LISTEN)<br/>VSCodium  79789 brian   39u  IPv4 0xa8c934c4274c9a9a      0t0  TCP 127.0.0.1:8766 (LISTEN) |
+| 5 | **不互搶** | 兩視窗都連好 → 關掉第二視窗的分頁 → 等超過 5 秒（`CLAIM_AFTER_MS`）→ 第一視窗的分頁**必須不動**，且 `~/.chatgpt-bridge/ports/claim.json` 不該出現<br />ＯＫ |
+| 6 | **不漂移** | 第二視窗的分頁留著、關掉第二個編輯器視窗 → 該分頁 console 應持續重試 8766 並退避，**不得**跑去接 8765<br />＃ＯＫ |
+| 7 | 子代理不撞 | 兩視窗同時各跑 2 個子代理 → 子分頁分別在 8810/8811 與 8814/8815，四份結果都回得來<br />＃失敗<br />已測試同時啟動 2 個子代理（8814 / 8815）。兩個呼叫皆送出，但執行端均回傳 HTTP 404，並出現 signal is aborted without reason，因此本次未取得子代理實際檢查內容；未修改任何工作區檔案。<br />已測試 2 個未指定 port 的子代理；兩者皆回傳 HTTP 404（signal is aborted without reason），未取得實際檢查結果，也未修改工作區檔案。<br />終了コード 7 --- 8810 final --- curl: (7) Failed to connect to 127.0.0.1 port 8810 after 0 ms: Couldn't connect to server --- 8811 final --- curl: (7) Failed to connect to 127.0.0.1 port 8811 after 0 ms: Couldn't connect to server |
 | 8 | 瀏覽器隔離 | 兩視窗各用一次 `browser` → `rtk proxy lsof -nP -iTCP:9444,9445 -sTCP:LISTEN` 各一個；`rtk proxy tail -2 ~/.chatgpt-bridge/run-ledger.ndjson` 兩筆的 `席`/`持ち主` 不同；**在第二視窗關瀏覽器，第一視窗的瀏覽器必須還活著** |
 | 9 | 滿席 | 開第 5 個專案視窗 → 出現 `seat.allTaken` 的提示並列出 4 個持有者路徑，不該拋未處理的例外 |
 
 **黏著性**已用純 node 驗過（見下方「已驗證」），但仍建議實機確認一次：關掉第二視窗再開同一個專案 → 應再次拿到 8766。
+＃有拿到，但是跟編輯器確認時會認為自己帶入的port是預設值8765
 
 ---
 
@@ -180,4 +181,4 @@ chatgpt.com 分頁也要重載 ← 協定 60→61，只做前一半不夠
 1. **protocol 61 是破壞性變更**：舊的 chatgpt.com 分頁（protocol 60）連上後會被記進 log，而且在 slot 0 不會回應 handover。使用者必須重載 Chrome 擴充**並**重載分頁，只做一件不夠。T-007 的 README 要寫清楚。
 2. **T-006 沒做完之前，多開的可用性是差的**：第二個視窗會安靜地等一個永遠不會來的分頁。
 3. `slots.json` 沒有提供 UI 或命令可以重設。要換席只能手動刪 `~/.chatgpt-bridge/ports/slots.json`。目前判斷 YAGNI，若使用者反映再做。
-4. 同帳號 4 專案 × 3 分頁 = 最多 12 個並行對話，**很可能撞到 ChatGPT 帳號側的速率限制**。這是使用時的節制問題，不是程式問題，但 README 值得提一句。
+4. #### 同帳號 4 專案 × 3 分頁 = 最多 12 個並行對話，**很可能撞到 ChatGPT 帳號側的速率限制**。這是使用時的節制問題，不是程式問題，但 README 值得提一句。
