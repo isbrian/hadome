@@ -83,6 +83,7 @@
   "command.deleteAllSessions.title": "保存した対話をまとめて消す…",
   "command.disconnectTab.title": "対象タブとの繋ぎを切る",
   "command.reconnectTab.title": "対象タブへ繋ぎ直す",
+  "command.pairTab.title": "この窓と組むタブを開く",
   "command.importChat.title": "対話を持ち込む…",
   "config.projectUrl.description": "新しい対話を始める場所。ChatGPT の「プロジェクト」の中で始めると、そのプロジェクトの指示が効きます（例: https://chatgpt.com/g/g-p-xxxx/project）。空なら素の chatgpt.com。",
   "command.writeProjectInstructions.title": "プロジェクトの指令へ、この橋の決まりを書き込む…",
