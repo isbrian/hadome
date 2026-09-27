@@ -123,35 +123,6 @@ find each other over `ws://127.0.0.1:8765`.
 5. Open a ChatGPT tab and sign in.
 6. In the editor, open the **ChatGPT Bridge** panel. It should say the tab is connected.
 
-> The editor extension and the browser extension must be **the same version**. Update only
-> one of them and the newer ports are never found, and the tab behaves differently from what
-> the editor expects. After an update, reload both: reload the extension at
-> `chrome://extensions`, **and** reload the chatgpt.com tab as well.
-
-## Running several projects at once
-
-Up to four editor windows can run at the same time — one project, one seat. Each seat has
-its own main port, its own block of sub-agent ports, and its own browser. They never take
-each other's tab and never close each other's browser.
-
-| Seat | Main port | Sub-agents | Browser |
-|---|---|---|---|
-| 0 | 8765 | 8810, 8811 | 9444 |
-| 1 | 8766 | 8814, 8815 | 9445 |
-| 2 | 8770 | 8818, 8819 | 9446 |
-| 3 | 8771 | 8822, 8823 | 9447 |
-
-Seats are handed out on startup and remembered, so the same project gets the same ports
-every time. **Seat 0 is the original 8765**, which means a single window behaves exactly as
-it always did: an ordinary chatgpt.com tab connects, and nothing needs configuring.
-
-The second window and beyond are different. An ordinary chatgpt.com tab **only ever looks
-for 8765**, so use **Open a Tab Paired with This Window** from the command palette to open a
-tab pinned to this window's port. That tab talks only to this window and cannot be taken by
-another one; this window will not go after anyone else's tab either.
-
-To pick the port yourself, set `port` in the workspace settings — once it is set, no seat is
-taken automatically.
 
 ## Safety
 
@@ -212,7 +183,7 @@ Settings live under `chatgptBridge.*`.
 | `thinking` | `false` | Turn on ChatGPT thinking before sending. **The toggle only appears when the open tab actually has that control and it responds** |
 | `mode` | `ask` | How much it asks before acting: `ask` / `edit` / `plan` / `never` |
 | `modes` | `[]` | Extra modes of your own |
-| `port` | `8765` | The local WebSocket port the two halves meet on. Leave it unset to have a seat assigned automatically (see "Running several projects at once") |
+| `port` | `8765` | The local WebSocket port the two halves meet on |
 | `allowlist` | 9 entries | Commands that run without asking |
 | `denylist` | `[]` | Commands that are refused even if allowlisted |
 | `commandTimeoutAllowlist` | `[]` | Commands allowed to run past the default timeout |
@@ -231,14 +202,15 @@ Settings live under `chatgptBridge.*`.
 | `diagnosticsAfterEdit` | `true` | Send new problems back after an edit |
 | `preventDoneWithOpenTodos` | `true` | Refuse to finish while todos are open |
 | `maxTurns` | `0` | Stop after N turns (`0` = no limit) |
+| `maxSendsPerHour` | `0` | Maximum sends per hour (`0` = no limit) |
 | `contextWindow` | `0` | Override the assumed context size |
 | `subAgents` | `2` | How many sub-agents may run at once (0–4) |
 | `model` | `""` | Model for the main agent (empty = whatever is selected in the ChatGPT tab) |
 | `thinkingEffort` | `""` | Thinking effort for the main agent (`min` / `standard` / `extended` / `max`) |
 | `subAgentModel` | `""` | Model for sub-agents only |
 | `subAgentThinkingEffort` | `""` | Thinking effort for sub-agents only |
-| `subAgentCleanup` | `archive-success` | Finished sub-agent conversations: `archive-success` / `archive-all` / `delete-success` (cannot be undone) / `none` |
-| `subPortBase` | `8810` | First port used for sub-agent tabs (seat 1 and up each shift to their own block) |
+| `subAgentCleanup` | `none` | Finished sub-agent conversations: no cleanup when unset; explicit settings can choose `archive-success` / `archive-all`. Deletion remains unavailable until it is verified on disposable conversations |
+| `subPortBase` | `8810` | First port used for sub-agent tabs |
 | `restartGapSeconds` | `20` | Wait this long before re-opening a conversation |
 | `loadGlobalRules` | `true` | Read your global agent rules |
 | `projectUrl` | `""` | The ChatGPT project to keep conversations inside |

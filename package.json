@@ -2,7 +2,7 @@
   "name": "hadome",
   "displayName": "%extension.displayName%",
   "description": "%extension.description%",
-  "version": "0.1.20.1",
+  "version": "0.1.21",
   "publisher": "local",
   "private": true,
   "license": "AGPL-3.0-or-later",
@@ -216,11 +216,6 @@
         "category": "%extension.displayName%"
       },
       {
-        "command": "chatgptBridge.pairTab",
-        "title": "%command.pairTab.title%",
-        "category": "%extension.displayName%"
-      },
-      {
         "command": "chatgptBridge.importChat",
         "title": "%command.importChat.title%",
         "category": "%extension.displayName%"
@@ -304,20 +299,26 @@
         },
         "chatgptBridge.subAgents": {
           "type": "number",
-          "default": 2,
+          "default": 0,
           "minimum": 0,
           "maximum": 4,
           "description": "%config.subAgents.description%"
+        },
+        "chatgptBridge.maxSendsPerHour": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 120,
+          "description": "%config.maxSendsPerHour.description%"
         },
         "chatgptBridge.subAgentCleanup": {
           "type": "string",
           "enum": [
             "none",
             "archive-success",
-            "archive-all",
-            "delete-success"
+            "archive-all"
           ],
-          "default": "archive-success",
+          "default": "none",
           "description": "%config.subAgentCleanup.description%"
         },
         "chatgptBridge.restartGapSeconds": {
@@ -455,16 +456,14 @@
             "ask",
             "edit",
             "plan",
-            "never",
-            "neverPlus"
+            "never"
           ],
           "default": "ask",
           "enumDescriptions": [
             "作業場の中の書き換えも毎回聞きます。始めたばかりの時や、慎重にやりたい時に。",
             "作業場の中の書き換えは聞きません。作業場の外と、許可リストに無い命令は聞きます（既定）。",
             "調べて段取りを立てるだけで、何も書き換えません。段取りに納得してから別のモードへ移ります。",
-            "聞きません。**隔離した作業場でだけ**使ってください。触らせない場所（.git など）は、この場合も通しません。",
-            "聞きません。**どの環境でも**使えます。触らせない場所（.git、秘密の入ったファイル、.bridgeignore）の門も開きます。守りは何も残りません。"
+            "聞きません。**隔離した作業場でだけ**使ってください。触らせない場所（.git など）は、この場合も通しません。"
           ],
           "description": "%config.mode.description%"
         },
@@ -763,11 +762,9 @@
   },
   "scripts": {
     "build": "node tools/build-webview.js",
-    "test": "node test/seat-check.js",
-    "build:prod": "node tools/build-webview.js --production",
     "watch": "node tools/build-webview.js --watch",
     "prepare": "node tools/build-webview.js && node tools/install-git-hooks.js",
-    "package": "node tools/package-extension.js",
+    "package": "npm run build && vsce package --allow-missing-repository --skip-license --no-rewrite-relative-links",
     "package:chrome": "node tools/package-chrome.js",
     "hooks:install": "node tools/install-git-hooks.js",
     "browser": "node tools/bridge-browser.js"

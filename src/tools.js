@@ -356,7 +356,7 @@ function withFull(full, clipped) {
 
 function resolveInside(root, rel) {
   if (typeof rel !== 'string' || rel.length === 0) {
-    throw new ToolError('path が空です', 'tool.pathEmpty');
+    throw new ToolError('path が空です。ワークスペースからの相対の道を字で渡してください（例: src/agent.js）', 'tool.pathEmpty');
   }
 
   const target = path.resolve(root, expandHome(rel));
@@ -371,7 +371,7 @@ function resolveInside(root, rel) {
   const realRoot = fs.realpathSync(root);
   const realProbe = fs.existsSync(probe) ? fs.realpathSync(probe) : probe;
   if (realProbe !== realRoot && !realProbe.startsWith(realRoot + path.sep)) {
-    throw new ToolError(`ワークスペースの外です: ${rel}`, 'tool.outside', { rel });
+    throw new ToolError(`ワークスペースの外です: ${rel}。中の道を渡してください（外を読みたい時は利用者に許してもらう必要があります）`, 'tool.outside', { rel });
   }
   return target;
 }
@@ -386,7 +386,7 @@ function wantName(v, 何の) {
   }
   if (!v.trim()) {
 
-    throw new ToolError(`${何の}の名前が空です`, 'tool.nameEmpty', { what: 何の });
+    throw new ToolError(`${何の}の名前が空です。名前を字で渡してください`, 'tool.nameEmpty', { what: 何の });
   }
   return v.trim();
 }
@@ -405,7 +405,12 @@ const ALWAYS_ON = [
 
 function isAllowed(command, allowlist) {
   const c = command.trim().replace(/\s+/g, ' ');
-  return allowlist.some((a) => c === a || c.startsWith(a + ' '));
+  return allowlist.some((entry) => {
+    const a = String(entry || '').trim().replace(/\s+/g, ' ');
+    if (!a) return false;
+
+    return c === a || c.startsWith(a + ' ');
+  });
 }
 
 const SHELL_META = /[;&|`$<>\n\r]/;
@@ -497,7 +502,7 @@ function splitArgs(command) {
     }
     cur += ch;
   }
-  if (quote) throw new ToolError(`引用符が閉じていません: ${command}`, 'tool.quote', { command });
+  if (quote) throw new ToolError(`引用符が閉じていません: ${command}。開いた引用符を閉じてから、もう一度 渡してください`, 'tool.quote', { command });
   if (cur || has) argv.push(cur);
   return argv;
 }
@@ -673,6 +678,15 @@ const READS = [
 
     'update_todos',
   ];
+function guardRasterImageAsText(filePath) {
+  if (/\.(?:png|jpe?g|gif|webp|avif|bmp|ico)$/i.test(filePath)) {
+    throw new ToolError(
+      '画素画像の拡張子には文字列を書けません。画像を取れるなら run_command で curl -o <道> <URL> のように取得してください。取れないなら偽の file を置かず「取れなかった」と最後の報告に書いてください。図を自分で描くなら .svg で書いてください。',
+      'tool.rasterImageAsText'
+    );
+  }
+}
+
 function makeTools({
 
   root: rootIn,
@@ -751,10 +765,12 @@ function makeTools({
   let allowlist = allowlistIn;
 
   const background = new Map();
+
+  const 起こした組 = new Set();
   let 番 = 0;
 
-  const 止める = (rec, sig) => {
-    if (!rec.child || rec.ended) return;
+  const 止める = (rec, sig, { evenIfEnded = false } = {}) => {
+    if (!rec.child || (rec.ended && !evenIfEnded)) return;
     try {
       process.kill(-rec.child.pid, sig);
     } catch {
@@ -851,7 +867,7 @@ function makeTools({
 
         const answer = await askOrPass({ kind: 'pathWriteInside', detail: inside });
         if (answer !== 'once' && answer !== 'always') {
-          throw new ToolError(`書き換えを許しませんでした: ${rel}`, 'tool.noWrite', { rel });
+          throw new ToolError(`書き換えを許しませんでした: ${rel}。別の道を選ぶか、利用者に許してもらってください`, 'tool.noWrite', { rel });
         }
 
       }
@@ -885,7 +901,7 @@ function makeTools({
       } else if (answer !== 'once') {
 
         throw new ToolError(
-          `ワークスペースの外です: ${rel}` + (askPermission ? '（利用者が許しませんでした）' : ''),
+          `ワークスペースの外です: ${rel}。中の道を渡してください` + (askPermission ? '（利用者が許しませんでした）' : ''),
           askPermission ? 'tool.outsideNo' : 'tool.outside',
           { rel }
         );
@@ -962,7 +978,13 @@ function makeTools({
           { why: e.message }
         );
       }
-      開いたタブ.set(r.targetId, r.url);
+      開いたタブ.set(r.targetId, {
+        url: r.url,
+        owner: 'chatgpt-bridge',
+        port: browser.PORT,
+        createdAt: Date.now(),
+        createReason: 'browser_open',
+      });
       いま見ているタブ = r.targetId;
 
       if (seenUrls) seenUrls.add(r.url);
@@ -1061,7 +1083,7 @@ function makeTools({
       await 站の関門((いま && いま.url) || '', 'browser_shot');
       const r = await browser.shot(id, { full: !!call.full });
       const buf = Buffer.from(String(r.base64 || ''), 'base64');
-      if (!buf.length) throw new ToolError('画面を撮れませんでした', 'tool.browserShotEmpty');
+      if (!buf.length) throw new ToolError('画面を撮れませんでした（中身が 0 バイトで返りました）。頁が出来上がるのを待ってから、もう一度 撮ってください', 'tool.browserShotEmpty');
 
       let 保存 = '';
       const rel = String(call.path || '').trim();
@@ -1136,15 +1158,18 @@ function makeTools({
 
     async browser_close(call) {
       const id = await タブを決める(call.tab);
-      const url = 開いたタブ.get(id) || '';
-      await browser.close(id);
+      const owned = 開いたタブ.get(id);
+      if (!owned || typeof owned !== 'object' || owned.owner !== 'chatgpt-bridge' || Number(owned.port) !== Number(browser.PORT)) {
+        throw new ToolError('この走りが作った隔離ブラウザーのタブだと確認できないため、閉じません。', 'tool.browserCloseNotOwned');
+      }
+      await browser.close(id, { port: owned.port });
       開いたタブ.delete(id);
       if (いま見ているタブ === id) いま見ているタブ = null;
       return {
         ok: true,
-        target: url || id,
+        target: owned.url || id,
         output:
-          `閉じました。${開いたタブ.size ? `まだ ${開いたタブ.size} 枚 開いています` : 'ほかに開いている頁はありません'}`,
+          `閉じました（tab=${id} / port=${owned.port} / owner=${owned.owner} / create=${owned.createReason || 'unknown'} / close=browser_close）。${開いたタブ.size ? `まだ ${開いたタブ.size} 枚 開いています` : 'ほかに開いている頁はありません'}`,
       };
     },
 
@@ -1192,7 +1217,7 @@ function makeTools({
         );
       }
       const buf = Buffer.from(String(r.base64 || ''), 'base64');
-      if (!buf.length) throw new ToolError('中身が空でした', 'tool.browserSaveEmpty');
+      if (!buf.length) throw new ToolError('中身が空でした（0 バイト）。頁が出来上がるのを待ってから、もう一度 保存してください', 'tool.browserSaveEmpty');
 
       fs.mkdirSync(path.dirname(abs), { recursive: true });
       fs.writeFileSync(abs, buf);
@@ -1211,7 +1236,7 @@ function makeTools({
 
       const stages = Array.isArray(call.stages) ? call.stages : null;
       if (stages) {
-        if (!stages.length) throw new ToolError('stages が空です', 'tool.tasksNeeded');
+        if (!stages.length) throw new ToolError('stages が空です。1 段につき 1 つ以上の依頼を入れた配列で渡してください', 'tool.tasksNeeded');
         if (stages.length > MAX_STAGES) {
           throw new ToolError(
             `段は ${MAX_STAGES} つまでです（${stages.length} つ来ました）`,
@@ -1224,7 +1249,7 @@ function makeTools({
         let 前の結果 = '';
         for (let i = 0; i < stages.length; i += 1) {
           const 段 = Array.isArray(stages[i]) ? stages[i] : [stages[i]];
-          if (!段.length) throw new ToolError(`${i + 1} 段目が空です`, 'tool.tasksNeeded');
+          if (!段.length) throw new ToolError(`${i + 1} 段目が空です。その段に 1 つ以上の依頼を入れて渡してください`, 'tool.tasksNeeded');
 
           const 頼み = 段.map((t) =>
             前の結果
@@ -1248,7 +1273,7 @@ function makeTools({
 
       const tasks = Array.isArray(call.tasks) ? call.tasks : [];
       if (tasks.length === 0) {
-        throw new ToolError('tasks か stages が要ります（配列で 1 件以上）', 'tool.tasksNeeded');
+        throw new ToolError('tasks か stages が要ります。1 件以上の依頼を入れた配列で渡してください', 'tool.tasksNeeded');
       }
 
       const 待つ = call.run_in_background === false;
@@ -1332,7 +1357,7 @@ function makeTools({
         );
       }
       if (!isGitRepo(元の作業場)) {
-        throw new ToolError('git の作業場ではないので、写しは作れません', 'tool.notGit');
+        throw new ToolError('git のワークスペースではないので、写しは作れません。写しを使わずに、いまのワークスペースでそのまま直してください', 'tool.notGit');
       }
       const 名 = String(call.name || '').trim() || `bridge-${Date.now().toString(36)}`;
 
@@ -1358,7 +1383,7 @@ function makeTools({
       }
       const 答え = await askOrPass({ kind: 'worktree', detail: `${名}\n${先}` });
       if (答え !== 'once' && 答え !== 'always') {
-        throw new ToolError('写しを作るのは断られました', 'tool.worktreeRefused', {});
+        throw new ToolError('写しを作るのは断られました。写しを使わずに、いまのワークスペースでそのまま直してください', 'tool.worktreeRefused', {});
       }
       try {
         execFileSync('git', ['-C', 元の作業場, 'worktree', 'add', '-b', 名, 先], GIT_IO);
@@ -1379,7 +1404,7 @@ function makeTools({
     },
 
     async exit_worktree(call) {
-      if (!写し) throw new ToolError('写しの中に居ません', 'tool.notInWorktree');
+      if (!写し) throw new ToolError('写しの中に居ません（exit_worktree は、enter_worktree で入った時にだけ使えます）', 'tool.notInWorktree');
       const action = String(call.action || '').trim();
       if (action !== 'keep' && action !== 'remove') {
         throw new ToolError('action は keep か remove です', 'tool.badWorktreeAction', { action });
@@ -1767,7 +1792,7 @@ function makeTools({
       const p = call.notebook_path || call.path;
       guard(p);
       const file = await pathFor(p);
-      if (!/\.ipynb$/i.test(file)) throw new ToolError('.ipynb ではありません', 'tool.notIpynb');
+      if (!/\.ipynb$/i.test(file)) throw new ToolError('.ipynb ではありません。ふつうのファイルは edit_file か write_file で直してください', 'tool.notIpynb');
       const mode = String(call.edit_mode || 'replace');
       if (!['replace', 'insert', 'delete'].includes(mode)) {
         throw new ToolError('edit_mode は replace / insert / delete のどれかです', 'tool.badEditMode');
@@ -1778,7 +1803,7 @@ function makeTools({
       } catch (e) {
         throw new ToolError(`ノートブックとして読めません: ${e.message}`, 'tool.badNotebook', { why: e.message });
       }
-      if (!Array.isArray(nb.cells)) throw new ToolError('cells がありません', 'tool.noCells');
+      if (!Array.isArray(nb.cells)) throw new ToolError('cells がありません（ノートブックの形になっていません）。read_file で中身を見てから直してください', 'tool.noCells');
 
       const wanted = String(call.cell_id == null ? '' : call.cell_id);
       const byIndex = /^#(\d+)$/.exec(wanted);
@@ -1832,6 +1857,7 @@ function makeTools({
 
     async write_file(call) {
       guard(call.path);
+      guardRasterImageAsText(call.path);
       if (typeof call.content !== 'string') {
 
         try {
@@ -1840,7 +1866,7 @@ function makeTools({
         } catch {
 
         }
-        throw new ToolError('content が文字列ではありません', 'tool.contentNotString');
+        throw new ToolError('content は文字列で渡してください（空にするなら空の文字列 ""）。入れ子の値や null は受け取れません', 'tool.contentNotString');
       }
       const file = await pathFor(call.path, { write: true });
       guardOverwrite(call.path, file);
@@ -1905,7 +1931,13 @@ function makeTools({
 
     async edit_file(call) {
       guard(call.path);
-      if (typeof call.new_text !== 'string') throw new ToolError('new_text が文字列ではありません', 'tool.newTextNotString');
+      guardRasterImageAsText(call.path);
+
+      if (typeof call.new_text !== 'string')
+        throw new ToolError(
+          'new_text は文字列で渡してください（消すなら空の文字列 ""）。入れ子の値や null は受け取れません',
+          'tool.newTextNotString'
+        );
       const file = await pathFor(call.path, { write: true });
       const exists = fs.existsSync(file);
 
@@ -2262,7 +2294,7 @@ function makeTools({
 
       const loginShell = process.env.SHELL || '/bin/zsh';
       const argv = meta ? [loginShell, '-lc', cmd] : splitArgs(cmd).map(expandHome);
-      if (argv.length === 0) throw new ToolError('命令が空です', 'tool.emptyCommand');
+      if (argv.length === 0) throw new ToolError('命令が空です。走らせたい命令を command に字で渡してください（例: npm run check:fast）', 'tool.emptyCommand');
 
       if (onCommandOutput) onCommandOutput({ id: call.id || '', command: cmd, chunk: '', started: true });
 
@@ -2299,6 +2331,7 @@ function makeTools({
         });
 
         const rec = { id: cmdId, command: cmd, child, out: '', ended: false, status: null, 満杯: false };
+        if (child.pid) 起こした組.add(child.pid);
         background.set(cmdId, rec);
 
         let done = false;
@@ -2397,8 +2430,12 @@ function makeTools({
         止める(rec, 'SIGTERM');
 
         setTimeout(() => 止める(rec, 'SIGKILL'), COMMAND_KILL_GRACE_MS).unref?.();
-        rec.ended = true;
-        return { ok: true, target: id, output: `止めました（${rec.command}）。` };
+
+        return {
+          ok: true,
+          target: id,
+          output: `止めるよう頼みました（${rec.command}）。聞かなければ ${COMMAND_KILL_GRACE_MS / 1000} 秒後に強く止めます。終わったかは read_command_output で確かめてください。`,
+        };
       }
 
       let text = rec.out || '';
@@ -2478,7 +2515,9 @@ function makeTools({
           `こちらが開いたタブではありません: ${id}\n` +
             '触れるのは browser_open で開いた物だけです。\n' +
             'いま開いているのは:\n' +
-            [...開いたタブ.keys()].map((x) => `  ${x}  ${開いたタブ.get(x)}`).join('\n'),
+            [...開いたタブ.entries()]
+              .map(([x, owned]) => `  ${x}  ${owned && typeof owned === 'object' ? owned.url || '' : String(owned || '')}`)
+              .join('\n'),
           'tool.browserNotOurs',
           { tab: id }
         );
@@ -2658,22 +2697,33 @@ function makeTools({
 
   Object.defineProperty(all, 'stopBackground', {
     enumerable: false,
-    value: ({ closeTabs = true } = {}) => {
+    value: ({ closeTabs = false } = {}) => {
       let n = 0;
       for (const rec of background.values()) {
-        if (rec.ended) continue;
-        止める(rec, 'SIGTERM');
-        setTimeout(() => 止める(rec, 'SIGKILL'), COMMAND_KILL_GRACE_MS).unref?.();
+
+        const 走っていた = !rec.ended;
+        if (走っていた) n += 1;
+        止める(rec, 'SIGTERM', { evenIfEnded: true });
+        if (走っていた) setTimeout(() => 止める(rec, 'SIGKILL', { evenIfEnded: true }), COMMAND_KILL_GRACE_MS).unref?.();
         rec.ended = true;
-        n += 1;
       }
       background.clear();
 
-      if (closeTabs) {
-        for (const id of 開いたタブ.keys()) {
-          browser.close(id).catch(() => {});
+      for (const pgid of 起こした組) {
+        try {
+          process.kill(-pgid, 'SIGTERM');
+        } catch {
+
         }
-        開いたタブ.clear();
+      }
+      起こした組.clear();
+
+      if (closeTabs) {
+        for (const [id, owned] of [...開いたタブ.entries()]) {
+          if (!owned || typeof owned !== 'object' || owned.owner !== 'chatgpt-bridge' || Number(owned.port) !== Number(browser.PORT)) continue;
+          browser.close(id, { port: owned.port }).catch(() => {});
+          開いたタブ.delete(id);
+        }
       }
       if (typeof onOpenTabs === 'function') onOpenTabs([...開いたタブ.entries()]);
       return n;
