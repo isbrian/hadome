@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="zh-Hant" xml:lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc 3.11" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>經驗報告：neverPlus 顯示與行為修正</title>
+  <style>
+
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: 1.5em;}
+div.column{flex: auto;}
+@media screen {
+div.columns{gap: min(4vw, 1.5em);}
+div.column{overflow-x: auto;}
+}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+
+ul.task-list[class]{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+font-size: inherit;
+width: 0.8em;
+margin: 0 0.8em 0.2em -1.6em;
+vertical-align: middle;
+}
+</style>
+  <style type="text/css">
+:root {
+--ink: #1a1d21;
+--ink-soft: #565b63;
+--ink-faint: #8b9198;
+--rule: #e2e5e9;
+--bg: #ffffff;
+--bg-sunk: #f6f7f8;
+--accent: #1f5fa8;
+--warn-bg: #fff8e6;
+--warn-edge: #d9a441;
+--stop-edge: #c0392b;
+--font-sans: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", -apple-system, system-ui, sans-serif;
+--font-mono: "Geist Mono", "SF Mono", Menlo, "Noto Sans Mono CJK TC", monospace;
+}
+* { box-sizing: border-box; }
+body {
+margin: 0 auto;
+padding: 3.5rem 1.5rem 6rem;
+max-width: 54rem;
+background: var(--bg);
+color: var(--ink);
+font-family: var(--font-sans);
+font-size: 16px;
+line-height: 1.75;
+
+letter-spacing: 0;
+}
+
+h1, h2, h3, h4 {
+line-height: 1.35;
+font-weight: 600;
+margin: 2.5em 0 0.8em;
+}
+
+h1, header#title-block-header h1.title {
+font-size: 1.95rem;
+margin-top: 0;
+padding-bottom: 0.6rem;
+border-bottom: 2px solid var(--ink);
+}
+h2 {
+font-size: 1.4rem;
+padding-top: 1.6rem;
+border-top: 1px solid var(--rule);
+}
+h3 { font-size: 1.12rem; }
+h4 { font-size: 1rem; color: var(--ink-soft); }
+
+nav#TOC {
+margin: 2.5rem 0 3rem;
+padding: 1.25rem 1.5rem;
+background: var(--bg-sunk);
+border-left: 3px solid var(--ink-faint);
+font-size: 0.92rem;
+}
+nav#TOC > ul { margin: 0; padding-left: 1.2rem; }
+nav#TOC ul ul { font-size: 0.95em; color: var(--ink-soft); }
+nav#TOC li { margin: 0.25em 0; }
+
+table {
+width: 100%;
+margin: 1.5rem 0;
+border-collapse: collapse;
+font-size: 0.92rem;
+line-height: 1.6;
+}
+thead th {
+text-align: left;
+font-weight: 600;
+padding: 0.55rem 0.7rem;
+border-bottom: 2px solid var(--ink);
+white-space: nowrap;
+}
+tbody td {
+padding: 0.55rem 0.7rem;
+border-bottom: 1px solid var(--rule);
+vertical-align: top;
+}
+tbody tr:hover { background: var(--bg-sunk); }
+
+tbody td:first-child { white-space: nowrap; }
+
+code {
+font-family: var(--font-mono);
+font-size: 0.875em;
+padding: 0.12em 0.35em;
+background: var(--bg-sunk);
+border: 1px solid var(--rule);
+border-radius: 2px;
+}
+pre {
+margin: 1.4rem 0;
+padding: 1rem 1.2rem;
+background: var(--bg-sunk);
+border-left: 3px solid var(--ink-faint);
+overflow-x: auto;
+line-height: 1.6;
+}
+pre code {
+padding: 0;
+background: none;
+border: none;
+font-size: 0.85rem;
+}
+
+blockquote {
+margin: 1.5rem 0;
+padding: 0.9rem 1.2rem;
+background: var(--warn-bg);
+border-left: 3px solid var(--warn-edge);
+color: var(--ink);
+}
+blockquote p { margin: 0.4em 0; }
+
+a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+a:hover { text-decoration-thickness: 2px; }
+hr { margin: 3rem 0; border: none; border-top: 1px solid var(--rule); }
+ul, ol { padding-left: 1.4rem; }
+li { margin: 0.3em 0; }
+
+input[type="checkbox"] { margin-right: 0.45em; }
+
+h1 + p,
+nav#TOC + p { color: var(--ink-soft); font-size: 0.95rem; }
+strong { font-weight: 600; }
+@media print {
+body { padding: 0; max-width: none; font-size: 11pt; }
+nav#TOC { break-after: page; }
+h2 { break-before: auto; break-after: avoid; }
+table, pre, blockquote { break-inside: avoid; }
+a { color: var(--ink); }
+}
+</style>
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">經驗報告：neverPlus 顯示與行為修正</h1>
+</header>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#1-先看這個" id="toc-1-先看這個">1. 先看這個</a></li>
+<li><a href="#2-做了什麼" id="toc-2-做了什麼">2. 做了什麼</a></li>
+<li><a href="#3-關鍵決策與理由" id="toc-3-關鍵決策與理由">3.
+關鍵決策與理由</a></li>
+<li><a href="#4-踩雷判斷失誤" id="toc-4-踩雷判斷失誤">4.
+踩雷：判斷失誤</a></li>
+<li><a href="#5-踩雷工具與環境" id="toc-5-踩雷工具與環境">5.
+踩雷：工具與環境</a></li>
+<li><a href="#6-特別提醒" id="toc-6-特別提醒">6. 特別提醒</a></li>
+<li><a href="#7-持續性風險與技術債" id="toc-7-持續性風險與技術債">7.
+持續性風險與技術債</a></li>
+<li><a href="#8-待辦" id="toc-8-待辦">8. 待辦</a></li>
+<li><a href="#9-可複用的判準" id="toc-9-可複用的判準">9.
+可複用的判準</a></li>
+<li><a href="#10-相關文件" id="toc-10-相關文件">10. 相關文件</a></li>
+<li><a href="#11-核心摘要" id="toc-11-核心摘要">11. 核心摘要</a></li>
+</ul>
+</nav>
+<h2 id="1-先看這個">1. 先看這個</h2>
+<ol type="1">
+<li><strong>面板顯示的模式不等於實際生效的模式。</strong>
+面板切換模式時寫入 Global，但專案的 <code>.vscode/settings.json</code>
+只要有 <code>chatgptBridge.mode</code>，就會蓋過
+Global。面板照樣顯示加強版，實際跑的卻是
+<code>edit</code>，所以許可清單外的指令還是會詢問。這個 bug
+在程式碼裡看不出來，要把設定檔也一起查才找得到。</li>
+<li><strong>上游合併會把功能拆成「半活」狀態。</strong> 0.1.21
+合併保留了
+<code>modeCycle.js</code>、<code>tools.js</code>、<code>panel.html</code>
+裡的 neverPlus，卻丟掉了 i18n、<code>extension.js</code> 和
+<code>package.json</code> 的部分。選單上出現原始
+key（<code>mode.neverPlus</code>）就是這種狀態的訊號。</li>
+<li><strong>使用者對外觀的描述有歧義時，先看截圖再動手。</strong>
+「觸發顏色從藍色改暗紅」我先猜成焦點外框，但實際是滑過時的藍色底色。這個藍底來自全域
+<code>button:hover</code> 的優先順序比選單項目自己的規則高。</li>
+</ol>
+<h2 id="2-做了什麼">2. 做了什麼</h2>
+<h3 id="時間軸">時間軸</h3>
+<table>
+<thead>
+<tr>
+<th>時間</th>
+<th>事件</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>09-29 22:00</td>
+<td>使用者回報：選單顯示 <code>mode.neverPlus</code>，而且加強版仍詢問
+<code>python3 src/generate_luna_3min_v2.py</code></td>
+</tr>
+<tr>
+<td>22:10</td>
+<td><code>git show 742970f</code> 對照後，確認 0.1.21 合併遺失了
+i18n、<code>extension.js</code>、<code>package.json</code> 的變更</td>
+</tr>
+<tr>
+<td>22:20</td>
+<td>追 <code>mode</code> 的傳遞路徑：<code>tools.js</code> 的
+<code>askOrPass</code> 本來就放行 neverPlus → 發現工作區設定覆蓋
+Global</td>
+</tr>
+<tr>
+<td>22:30</td>
+<td>補回
+i18n、<code>skipsAsking()</code>/<code>unrestricted()</code>，把模式寫入改成寫到實際生效的層級</td>
+</tr>
+<tr>
+<td>22:35</td>
+<td><code>conversation-lifecycle.js</code> 與 <code>package.json</code>
+enum 的修改被自動模式分類器擋下（Security Weaken）</td>
+</tr>
+<tr>
+<td>22:45</td>
+<td>使用者提供第二張截圖：藍色是滑過時的底色，不是外框 → 改寫 CSS</td>
+</tr>
+<tr>
+<td>22:47</td>
+<td>改 <code>.vscode/settings.json</code> 為 <code>neverPlus</code>
+被分類器擋下（Create Unsafe Agents），由使用者手動改</td>
+</tr>
+<tr>
+<td>22:51</td>
+<td>commit <code>c9a5689</code>，推送後開 PR #21</td>
+</tr>
+<tr>
+<td>23:15</td>
+<td><code>--no-ff</code> 合併進 develop，<code>npm run package</code>
+打包</td>
+</tr>
+<tr>
+<td>23:18</td>
+<td>使用者要求：<code>.vscodeignore</code> 排除
+<code>.vscode/**</code>，並把本地分支改名 <code>end/</code>；commit
+<code>5424bbc</code> 並重新打包</td>
+</tr>
+<tr>
+<td>23:18</td>
+<td>push develop，PR #21 自動變成 MERGED</td>
+</tr>
+<tr>
+<td>09-30</td>
+<td>使用者確認安裝後可以正常執行</td>
+</tr>
+</tbody>
+</table>
+<h3 id="commit-清單">Commit 清單</h3>
+<table>
+<thead>
+<tr>
+<th>Commit</th>
+<th>內容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>c9a5689</code></td>
+<td>fix：補回 neverPlus 的
+i18n、<code>skipsAsking</code>、<code>unrestricted</code>；選單滑過時改為暗紅底；模式寫入改成寫到實際生效的層級</td>
+</tr>
+<tr>
+<td><code>424397b</code></td>
+<td>merge：<code>feat/neverPlus修正</code> 合進 develop</td>
+</tr>
+<tr>
+<td><code>5424bbc</code></td>
+<td>chore：<code>.vscodeignore</code> 加上 <code>.vscode/**</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="最終落點">最終落點</h3>
+<ul>
+<li>develop 與 origin 都在 <code>5424bbc</code>；PR <a href="https://github.com/isbrian/hadome/pull/21">#21</a> 已合併</li>
+<li>本地分支已改名為 <code>end/neverPlus修正</code>，遠端的
+<code>origin/feat/neverPlus修正</code> 保留不動</li>
+<li><code>hadome-0.1.22.vsix</code>
+已重新打包，使用者安裝後確認可以正常執行</li>
+</ul>
+<h2 id="3-關鍵決策與理由">3. 關鍵決策與理由</h2>
+<table>
+<thead>
+<tr>
+<th>決策</th>
+<th>理由</th>
+<th>不這樣做會怎樣</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>模式寫入改成：工作區有值就寫工作區，否則寫 Global</td>
+<td>讓面板上的切換真的生效</td>
+<td>只補 i18n 的話，選單文字正確了，但只要專案有
+<code>.vscode/settings.json</code>
+就照樣詢問，使用者會以為加強版壞了</td>
+</tr>
+<tr>
+<td>不處理 <code>workspaceFolderValue</code></td>
+<td>設定只取 <code>getConfiguration(&#39;chatgptBridge&#39;)</code>，沒有帶
+resource；對它寫 WorkspaceFolder 層會出錯</td>
+<td>多根工作區裡資料夾層的設定仍會蓋過，屬已知限制</td>
+</tr>
+<tr>
+<td>暗紅底只套在加強版選項上</td>
+<td>使用者只要求這個選項</td>
+<td>一起改其他四個選項會擴大範圍；它們滑過時可能也是藍底，留作待辦</td>
+</tr>
+<tr>
+<td>分類器擋下的修改不繞道</td>
+<td>修改涉及權限放寬，應由使用者決定</td>
+<td>換工具或換寫法硬改，等於規避安全閘</td>
+</tr>
+<tr>
+<td>把 <code>.vscode/**</code> 排除在 vsix 之外</td>
+<td>本機設定含絕對路徑和指令許可清單</td>
+<td>vsix 給別人用時，這些資訊會一起帶出去</td>
+</tr>
+</tbody>
+</table>
+<h2 id="4-踩雷判斷失誤">4. 踩雷：判斷失誤</h2>
+<h3 id="yellow_circle-4-1-把藍色猜成焦點外框寫了用不到的-css">🟡 4-1
+把「藍色」猜成焦點外框，寫了用不到的 CSS</h3>
+<p><strong>症狀</strong>：使用者說「觸發顏色從藍色改暗紅」。我在 CSS
+裡找不到加強版有藍色，就依照 <code>742970f</code>
+的註解「既定の青い焦点の枠」，推測是點選時的外框，加了
+<code>:focus</code>／<code>:active</code> 的外框規則。</p>
+<p><strong>真相</strong>：第二張截圖顯示，藍色是滑過時整列的底色。來源是全域
+<code>button:hover:not(:disabled)</code> 用的
+<code>--vscode-button-background</code>。</p>
+<p><strong>根因</strong>：找不到使用者說的那個顏色時，我沒有停下來要截圖，而是從歷史註解去推測。</p>
+<p><strong>教訓</strong>：程式碼裡找不到使用者描述的視覺現象時，先要截圖或請對方指出位置，不要從相近的線索推測。</p>
+<h3 id="yellow_circle-4-2-用檔名搜尋認定使用者的專案認錯了">🟡 4-2
+用檔名搜尋認定使用者的專案，認錯了</h3>
+<p><strong>症狀</strong>：截圖裡的指令是
+<code>python3 src/generate_luna_3min_v2.py</code>。我在磁碟上搜到它在
+<code>AI-YouTube--</code>，就把那個專案的設定當成成因來報告。</p>
+<p><strong>真相</strong>：使用者說不是那個專案。雖然結論（工作區設定覆蓋）同樣成立，但舉證的對象錯了。</p>
+<p><strong>根因</strong>：同一個腳本可能被多個專案引用或複製，「搜到一個」不等於「使用者正在用的就是它」。</p>
+<p><strong>教訓</strong>：從檔名反推使用者的工作環境時，要把它標成推測，並請使用者確認。</p>
+<h3 id="yellow_circle-4-3-把敏感修改和一般修改放在同一個指令裡">🟡 4-3
+把敏感修改和一般修改放在同一個指令裡</h3>
+<p><strong>症狀</strong>：<code>conversation-lifecycle.js</code> 與
+<code>package.json</code> 的修改寫在同一個 python
+腳本裡，被分類器整批擋下；接下來連語法驗證指令也被判定為延續同一個結果而擋下。</p>
+<p><strong>真相</strong>：分類器是以「結果」判斷的。整批被擋之後，後續相關動作也不能再做。</p>
+<p><strong>根因</strong>：沒有事先區分哪些修改會放寬權限。</p>
+<p><strong>教訓</strong>：會放寬權限或安全防線的修改要單獨執行，並先向使用者說明；驗證指令要在敏感修改之前先跑。</p>
+<h3 id="green_circle-4-4-合併後沒有照專案慣例改分支名">🟢 4-4
+合併後沒有照專案慣例改分支名</h3>
+<p><strong>症狀</strong>：合併完成就回報了。使用者提醒「合併完成分支沒改名」。</p>
+<p><strong>真相</strong>：專案慣例是合併後把本地 <code>feat/X</code>
+改成 <code>end/X</code>（已有
+<code>end/合併0.1.21</code>、<code>end/多席位分頁綁定</code>），pr-merge
+skill 沒有寫到這一步。</p>
+<p><strong>根因</strong>：只照 skill
+的步驟走，沒有看既有分支的命名去推出慣例。</p>
+<p><strong>教訓</strong>：執行通用 SOP 前，先用
+<code>git branch -a</code> 看一下專案的既有痕跡，專案慣例優先於通用
+SOP。已寫入 memory。</p>
+<h3 id="green_circle-4-5-覆蓋既有打包檔之前沒有先看命名慣例">🟢 4-5
+覆蓋既有打包檔之前沒有先看命名慣例</h3>
+<p><strong>症狀</strong>：<code>npm run package</code> 直接覆蓋了
+<code>hadome-0.1.22.vsix</code>，事後才發現使用者習慣用
+<code>-1</code>、<code>-2</code> 保留舊版。</p>
+<p><strong>根因</strong>：版本號沒變，打包工具會覆蓋同名檔，我沒有先看目錄裡既有檔案的命名方式。</p>
+<p><strong>教訓</strong>：會覆蓋同名產出物的指令，執行前先
+<code>ls</code> 看既有命名；有保留舊版的習慣時，先改名或先問。</p>
+<h2 id="5-踩雷工具與環境">5. 踩雷：工具與環境</h2>
+<h3 id="red_circle-5-1-vs-code-設定的層級覆蓋是無聲的">🔴 5-1 VS Code
+設定的層級覆蓋是無聲的</h3>
+<p><code>config.update(&#39;mode&#39;, v, Global)</code>
+會成功，但只要工作區層有值，讀取時仍拿到工作區的值。面板顯示的是
+<code>update</code>
+的回傳值（想要的值），不是實際生效的值，所以畫面和行為不一致，也不會有任何錯誤訊息。</p>
+<p><strong>對策</strong>：寫入前先用 <code>inspect()</code>
+找出實際生效的層級。</p>
+<h3 id="red_circle-5-2-合併遺失功能時不會有任何衝突訊號">🔴 5-2
+合併遺失功能時，不會有任何衝突訊號</h3>
+<p>0.1.21 合併遺失了 <code>742970f</code> 的部分檔案，但 git
+沒有回報衝突。症狀只在執行時出現：畫面顯示原始 i18n
+key、行為退回舊模式。</p>
+<p><strong>對策</strong>：看到原始 i18n key
+時，直接對照原本新增這個功能的
+commit（<code>git show &lt;sha&gt; --stat</code>），逐一比對每個檔案還在不在。</p>
+<h3 id="yellow_circle-5-3-css-優先順序buttonhovernotdisabled-蓋過-modeitemhover">🟡
+5-3 CSS 優先順序：<code>button:hover:not(:disabled)</code> 蓋過
+<code>.modeitem:hover</code></h3>
+<p><code>button:hover:not(:disabled)</code> 的優先順序是 (0,2,1)，比
+<code>.modeitem:hover</code> 的 (0,2,0) 高。選單項目本身是
+<code>&lt;button&gt;</code>，所以滑過時套到的是全域的按鈕藍色。</p>
+<p><strong>對策</strong>：要覆蓋時，選擇器要夠具體，例如
+<code>.modeitem.mode-neverPlus:hover:not(:disabled)</code>。</p>
+<h3 id="yellow_circle-5-4-自動模式分類器會擋下放寬權限的修改">🟡 5-4
+自動模式分類器會擋下放寬權限的修改</h3>
+<p>這次被擋下的有三件：<code>conversation-lifecycle.js</code> 讓
+neverPlus 不詢問、<code>package.json</code> 的 enum、把
+<code>.vscode/settings.json</code> 改成
+<code>neverPlus</code>。擋下之後，同一個結果的後續動作（包含驗證）也不能再做。</p>
+<p><strong>對策</strong>：這類修改改由使用者手動執行，或請使用者調整權限規則之後再做。</p>
+<h3 id="green_circle-5-5-vsce-預設會把-vscodesettingsjson-打包進-vsix">🟢
+5-5 vsce 預設會把 <code>.vscode/settings.json</code> 打包進 vsix</h3>
+<p>原本的 <code>.vscodeignore</code> 沒有排除
+<code>.vscode/</code>，本機設定（含絕對路徑、指令許可清單）因此進了
+vsix。</p>
+<p><strong>對策</strong>：已加上 <code>.vscode/**</code>，並解開 vsix
+確認不再包含。</p>
+<h3 id="green_circle-5-6-專案沒有-npm-test只能用-node---check">🟢 5-6
+專案沒有 <code>npm test</code>，只能用 <code>node --check</code></h3>
+<p><code>package.json</code> 沒有 test script，驗證只能靠語法檢查和解開
+vsix 抽查，行為層面最後要靠使用者實際安裝確認。</p>
+<h3 id="green_circle-5-7-zsh-會展開-grep---include-的萬用字元">🟢 5-7
+zsh 會展開 <code>grep --include=*</code> 的萬用字元</h3>
+<p><code>grep -rn ... --include=*</code> 在 zsh 下會出現
+<code>no matches found</code>，指令根本沒有執行。</p>
+<p><strong>對策</strong>：萬用字元要加引號（<code>--include=&#39;*.js&#39;</code>），或乾脆拿掉
+<code>--include</code>。</p>
+<h2 id="6-特別提醒">6. 特別提醒</h2>
+<ul>
+<li><strong>切換到加強版之前，先看專案的
+<code>.vscode/settings.json</code>。</strong>
+這次修正後，面板切換會寫到工作區層；在舊版擴充功能上，要手動把
+<code>chatgptBridge.mode</code> 改掉或刪掉。</li>
+<li><strong>加強版會解除
+<code>.git</code>、密鑰檔、<code>.bridgeignore</code> 的保護。</strong>
+所有防線都不再擋，只適合完全信任的工作區。</li>
+<li><strong>版本號沒變，打包就會覆蓋同名 vsix。</strong>
+要保留舊版，請先改名。</li>
+</ul>
+<h2 id="7-持續性風險與技術債">7. 持續性風險與技術債</h2>
+<table>
+<thead>
+<tr>
+<th>項目</th>
+<th>影響</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>conversation-lifecycle.js:19</code> 只認
+<code>never</code>，不認 <code>neverPlus</code></td>
+<td>加強版遇到需要重開對話時仍會詢問</td>
+</tr>
+<tr>
+<td><code>package.json</code> 的 enum 沒有 <code>neverPlus</code></td>
+<td>settings.json 裡設 <code>neverPlus</code> 會出現警告</td>
+</tr>
+<tr>
+<td>其他四個模式選項滑過時可能也是藍底</td>
+<td>與 <code>button:hover</code> 同一個根因，只修了加強版</td>
+</tr>
+<tr>
+<td>暗紅 <code>#8b1a1a</code> 當文字顏色，在深色主題下對比度低</td>
+<td>狀態按鈕上的文字不易辨識</td>
+</tr>
+<tr>
+<td>多根工作區的資料夾層設定仍會蓋過</td>
+<td>模式寫入只處理 Workspace 與 Global 兩層</td>
+</tr>
+</tbody>
+</table>
+<h2 id="8-待辦">8. 待辦</h2>
+<table>
+<thead>
+<tr>
+<th>優先級</th>
+<th>項目</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>高</td>
+<td>使用者決定是否補上 <code>conversation-lifecycle.js</code> 與
+<code>package.json</code> enum</td>
+</tr>
+<tr>
+<td>中</td>
+<td>檢查其他四個模式選項滑過時的底色，統一改為
+<code>--role-hover</code></td>
+</tr>
+<tr>
+<td>中</td>
+<td>升版號（0.1.23），避免 vsix 被覆蓋</td>
+</tr>
+<tr>
+<td>低</td>
+<td>評估狀態按鈕文字改用對比度較高的紅色</td>
+</tr>
+</tbody>
+</table>
+<h2 id="9-可複用的判準">9. 可複用的判準</h2>
+<table>
+<thead>
+<tr>
+<th>判準</th>
+<th>用在哪</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>畫面顯示的狀態，是讀回來的值，還是寫入時的值？</td>
+<td>任何「設定改了卻沒效」的問題</td>
+</tr>
+<tr>
+<td>分層設定：寫入的層級是不是實際生效的那一層？</td>
+<td>VS Code 設定、git config、環境變數、CSS 等任何有覆蓋順序的系統</td>
+</tr>
+<tr>
+<td>畫面出現原始 i18n key → 先懷疑合併遺失，不是翻譯漏寫</td>
+<td>大量合併上游之後的回歸問題</td>
+</tr>
+<tr>
+<td>找不到使用者描述的現象 → 先要截圖，不要從相近線索推測</td>
+<td>UI 與視覺相關的需求</td>
+</tr>
+<tr>
+<td>會放寬安全防線的修改要單獨執行、先說明</td>
+<td>任何有權限閘的自動化環境</td>
+</tr>
+<tr>
+<td>執行通用 SOP 前，先看專案既有痕跡推出慣例</td>
+<td>分支命名、產出物命名、commit 格式</td>
+</tr>
+</tbody>
+</table>
+<h2 id="10-相關文件">10. 相關文件</h2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/isbrian/hadome/pull/21">PR #21</a></td>
+<td>本次修正的 PR</td>
+</tr>
+<tr>
+<td><a href="../extension.js">extension.js</a></td>
+<td><code>skipsAsking()</code>、<code>unrestricted()</code>、模式寫入層級</td>
+</tr>
+<tr>
+<td><a href="../webview/panel.html">webview/panel.html</a></td>
+<td>加強版選項的暗紅底色</td>
+</tr>
+<tr>
+<td><a href="../src/tools.js">src/tools.js</a></td>
+<td><code>askOrPass</code> 對 neverPlus 放行</td>
+</tr>
+<tr>
+<td><a href="../src/conversation-lifecycle.js">src/conversation-lifecycle.js</a></td>
+<td>尚未處理的 neverPlus 判斷</td>
+</tr>
+<tr>
+<td><a href="../.vscodeignore">.vscodeignore</a></td>
+<td>排除 <code>.vscode/**</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="11-核心摘要">11. 核心摘要</h2>
+<pre class="text"><code>neverPlus 修正（2026-09-29，PR #21，develop 5424bbc）
+- 症狀：選單顯示 mode.neverPlus 原始 key；加強版仍詢問許可清單外的指令
+- 根因 1：0.1.21 合併遺失 742970f 的 i18n / extension.js / package.json 變更，git 沒有回報衝突
+- 根因 2：面板把模式寫入 Global，但工作區 .vscode/settings.json 的 chatgptBridge.mode 會蓋過；面板顯示的是寫入值，不是生效值
+- 根因 3：選單滑過的藍底來自全域 button:hover:not(:disabled)（優先順序 0,2,1 &gt; .modeitem:hover 0,2,0）
+- 修正：補回 i18n 與 skipsAsking/unrestricted；用 inspect() 找出生效層級再寫入；加強版選項滑過時改為暗紅底；.vscodeignore 排除 .vscode/**
+- 未完成（被自動模式分類器擋下）：conversation-lifecycle.js:19 的 neverPlus 判斷、package.json enum
+- 慣例：合併進 develop 後，本地 feat/X 改名為 end/X，遠端不動</code></pre>
+</body>
+</html>
