@@ -232,8 +232,18 @@ function post(msg) {
   send(type, data);
 }
 
+// 「略過」と「略過（加強版）」は聞かない。加強版は更に触らせない場所の門も開く。
+function skipsAsking() {
+  const m = settings().mode;
+  return m === 'never' || m === 'neverPlus';
+}
+
+function unrestricted() {
+  return settings().mode === 'neverPlus';
+}
+
 function neverModeStop(reason) {
-  if (settings().mode !== 'never') return null;
+  if (!skipsAsking()) return null;
   post({ type: 'note', text: t('never.autostop', { why: t(reason) }) });
   return '';
 }
@@ -2019,7 +2029,7 @@ function askStuck(kind, times, why) {
 
 let pendingRestart = null;
 function askRestart(info) {
-  if (settings().mode === 'never') return Promise.resolve('stop');
+  if (skipsAsking()) return Promise.resolve('stop');
   const why = t('restartWhy.' + String(info.why || 'other'));
   return new Promise((resolve) => {
     if (pendingRestart) pendingRestart.resolve('keep');
@@ -2062,7 +2072,7 @@ function askTodosOpen(left) {
 }
 
 function askSilentStreak(times, why, calledEver, silentRecovery = null) {
-  if (settings().mode === 'never' && silentRecovery && !silentRecovery.nudged) {
+  if (skipsAsking() && silentRecovery && !silentRecovery.nudged) {
     silentRecovery.nudged = true;
     post({ type: 'note', text: t('silent.reached', { n: times }) });
     return Promise.resolve({ continue: true });
@@ -2091,7 +2101,7 @@ function askSilentStreak(times, why, calledEver, silentRecovery = null) {
 let pendingDowngrade = null;
 function askDowngrade(info) {
   const when = info.hhmm ? t('downgrade.until', { hhmm: info.hhmm }) : t('downgrade.unknownUntil');
-  if (settings().mode === 'never') {
+  if (skipsAsking()) {
     const policy = info.until ? 'wait' : 'continue';
     post({ type: 'note', text: t('downgrade.auto.' + policy, { model: info.to || '?', when }) });
     return Promise.resolve(policy);
@@ -2759,7 +2769,7 @@ const fromWebview = {
       for (const uri of found) {
         const rel = path.relative(root, uri.fsPath).split(path.sep).join('/');
         if (!rel || rel.startsWith('..')) continue;
-        if (whyBlocked(root, rel, { protectSecrets })) continue;
+        if (whyBlocked(root, rel, { protectSecrets, unrestricted: unrestricted() })) continue;
         items.push(rel);
 
         for (let cut = rel.lastIndexOf('/'); cut > 0; ) {
@@ -2825,7 +2835,13 @@ const fromWebview = {
     const nm = String(rel || '').trim();
     if (!nm) return { ok: false };
 
-    if (whyBlocked(s2.root, nm, { protectSecrets: settings().protectSecrets })) return { ok: false };
+    if (
+      whyBlocked(s2.root, nm, {
+        protectSecrets: settings().protectSecrets,
+        unrestricted: unrestricted(),
+      })
+    )
+      return { ok: false };
     const full = path.join(s2.root, nm);
     try {
       const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(full));
@@ -2901,9 +2917,14 @@ const fromWebview = {
     const { ORDER } = require('./webview/src/ui/modeCycle');
     const want = String(mode || '');
     if (!ORDER.includes(want)) return { mode: settings().mode };
-    await vscode.workspace
-      .getConfiguration('chatgptBridge')
-      .update('mode', want, vscode.ConfigurationTarget.Global);
+    const cfg = vscode.workspace.getConfiguration('chatgptBridge');
+    // 作業場の設定に mode が有ると Global へ書いても効かない。効いている層へ書く。
+    const got = cfg.inspect('mode') || {};
+    const target =
+      got.workspaceValue !== undefined
+        ? vscode.ConfigurationTarget.Workspace
+        : vscode.ConfigurationTarget.Global;
+    await cfg.update('mode', want, target);
     return { mode: want };
   },
 

@@ -41,9 +41,8 @@
         --role-mode-plan: var(--vscode-foreground, #bfbfbf);
         --role-mode-edit: var(--vscode-foreground, #bfbfbf);
         --role-mode-never: var(--vscode-errorForeground, #ff827d);
-        --role-mode-neverPlus: var(--vscode-errorForeground, #ff827d);
-
         --role-mode-focus-danger: #8b1a1a;
+        --role-mode-neverPlus: var(--role-mode-focus-danger);
         --role-sub-1: var(--vscode-charts-blue, #3794ff);
         --role-sub-2: var(--vscode-charts-purple, #b180d7);
         --role-sub-3: var(--vscode-charts-orange, #d18616);
@@ -776,6 +775,13 @@
       .modeitem:focus-visible {
         outline: 2px solid var(--role-mode-focus-danger);
         outline-offset: -1px;
+      }
+      /* 加強版だけ、指した時の高まりを button:hover の青から暗い赤へ。 */
+      .modeitem.mode-neverPlus:hover:not(:disabled),
+      .modeitem.mode-neverPlus:focus-visible,
+      .modeitem.mode-neverPlus:active {
+        background: var(--role-mode-focus-danger);
+        color: #fff;
       }
       .modeitem:hover .mark,
       .modeitem:focus-visible .mark { color: var(--role-primary-fg); }
