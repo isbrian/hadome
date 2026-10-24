@@ -1,3 +1,10 @@
+---
+scope:
+  type: single-repo
+default_branch: develop
+task_type: implementation
+---
+
 # 派工單：多席位分頁綁定
 
 > 分支：`feat/多席位分頁綁定`（從 `develop` 切出；T-001~T-005 已 commit 於 `f92c400`，**本地分支，尚未 push**）
