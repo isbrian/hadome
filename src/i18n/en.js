@@ -274,6 +274,8 @@ module.exports = {
   'goal.cleared': 'Goal cleared.',
   'note.switching': 'Switching to a new conversation…',
   'note.switchFailed': 'Switching failed: {why}',
+  'note.autoHandoff': 'Estimated context usage reached {pct}%. Started a fresh conversation and resumed the task ({n}/{max}).',
+  'note.autoHandoffFailed': 'Automatic handoff failed; stopped to prevent duplicate actions: {why}',
   'note.movingTab': 'Moving the tab to that conversation…',
   'note.replayHead': '— everything above is from the previous session ({n} items) —',
   'row.failed': "This line could not be shown (its shape wasn't readable)",

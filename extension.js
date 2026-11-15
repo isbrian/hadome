@@ -274,6 +274,9 @@ function settings() {
 
     timeoutAllowlist: c.get('commandTimeoutAllowlist', []),
     maxTurns: c.get('maxTurns', 0),
+    autoHandoff: c.get('autoHandoff', false),
+    contextWindow: c.get('contextWindow', 0),
+    maxHandoffs: c.get('maxHandoffs', 2),
     requireRestorePoint: c.get('requireRestorePoint', false),
     protectSecrets: c.get('protectSecrets', true),
     loadGlobalRules: c.get('loadGlobalRules', true),
@@ -977,6 +980,9 @@ async function handleRun(task) {
       thinkingEffort: settings().thinkingEffort,
 
       restartGapMs: gapMsFromSettings(),
+      autoHandoff: settings().autoHandoff,
+      contextWindow: settings().contextWindow,
+      maxHandoffs: settings().maxHandoffs,
 
       tr: (k, v) => t(k, v),
 
@@ -1211,6 +1217,8 @@ async function handleRun(task) {
           resend: () => t('note.resendingOnce'),
 
           policy: () => t('note.policy', { why: String(n.why || '') }),
+          autoHandoff: () => t('note.autoHandoff', { pct: (Number(n.ratio || 0) * 100).toFixed(1), n: String(n.n), max: String(n.max) }),
+          autoHandoffFailed: () => t('note.autoHandoffFailed', { why: String(n.why || '') }),
           restart: () => {
 
             s.modelSlug = null;

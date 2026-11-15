@@ -276,6 +276,8 @@ module.exports = {
   'goal.cleared': '目当てを外しました。',
   'note.switching': '新しい対話に切り替えています…',
   'note.switchFailed': '切り替えに失敗しました: {why}',
+  'note.autoHandoff': 'コンテキスト使用率の概算が {pct}% に達したため、新しい対話で作業を引き継ぎました（{n}/{max}）。',
+  'note.autoHandoffFailed': '自動引き継ぎに失敗しました。操作の重複を避けるため停止しました: {why}',
   'note.movingTab': '相手のタブを、その対話へ移しています…',
   'note.replayHead': '— ここから上は前回の続きです（{n} 件）—',
   'row.failed': 'この行は出せませんでした（形が読めません）',
