@@ -7,12 +7,14 @@ const RECOVERY_REASONS = new Set([
   'recovery-downgraded',
   'recovery-no-call',
 ]);
-const REASONS = new Set([...EXPLICIT_REASONS, ...RECOVERY_REASONS, 'project-gone']);
+const AUTO_REASONS = new Set(['auto-context-handoff']);
+const REASONS = new Set([...EXPLICIT_REASONS, ...RECOVERY_REASONS, ...AUTO_REASONS, 'project-gone']);
 
 function decideConversationChange({ reason, explicit = false, mode = 'edit', choice = '' } = {}) {
   const why = String(reason || '');
   if (!REASONS.has(why)) return { action: 'stop', reason: why || 'unknown' };
   if (why === 'project-gone') return { action: 'stop', reason: why };
+  if (AUTO_REASONS.has(why)) return { action: 'stop', reason: why };
   if (EXPLICIT_REASONS.has(why)) {
     return explicit ? { action: 'create', reason: why } : { action: 'stop', reason: why };
   }
@@ -23,4 +25,4 @@ function decideConversationChange({ reason, explicit = false, mode = 'edit', cho
   return { action: 'ask', reason: why };
 }
 
-module.exports = { decideConversationChange, EXPLICIT_REASONS, RECOVERY_REASONS, REASONS };
+module.exports = { decideConversationChange, EXPLICIT_REASONS, RECOVERY_REASONS, AUTO_REASONS, REASONS };

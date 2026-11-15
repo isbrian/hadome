@@ -16,6 +16,7 @@ const lastmodel = require('./lastmodel');
 
 const { noteStreamCut } = require('./streamcuts');
 const { decideConversationChange } = require('./conversation-lifecycle');
+const { decideAutoHandoff, mutationFingerprint, buildHandoffMessage } = require('./auto-handoff');
 
 const 命令の頭 = /^(git|npm|node|npx|ls|cat|grep|find|sed|awk|rm|mv|cp|mkdir|python3?|uv|php|composer|curl|make|bash|sh)(\s|_|$)/i;
 function 命令に見える(名) {
@@ -383,6 +384,9 @@ async function runAgentBody({
   thinking = undefined,
   model = '',
   thinkingEffort = '',
+  autoHandoff = false,
+  contextWindow = 0,
+  maxHandoffs = 2,
 }, onTools) {
   const runLog = arguments[2] || { tool() {}, send() {}, close() {} };
 
@@ -523,6 +527,12 @@ async function runAgentBody({
   });
   if (onTools) onTools(tools);
   const history = [];
+  const handoffJournal = [];
+  const successfulMutations = new Set();
+  const protectedMutations = new Set();
+  let handoffs = 0;
+  let lastHandoffUsageChars = 0;
+  let waitingForUsageReset = false;
   let silent = 0;
 
   let remindedDeadModel = false;
@@ -1012,6 +1022,8 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
     message = '--- 次の作業 ---\n' + task;
   }
 
+  const handoffRules = firstMessage && firstMessage.includes(TASK_MARK)
+    ? firstMessage.slice(0, firstMessage.indexOf(TASK_MARK)) : '';
   let turnLimit = maxTurns > 0 ? maxTurns : Infinity;
 
   const 済み = { n: 0,名: {} };
@@ -1028,6 +1040,67 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
     }
     if (shouldStop()) {
       return { status: 'stopped', reason: '利用者が中断した', startSha, turns: turn - 1, history };
+    }
+
+    // 只在完整回合結束、工具結果已收齊時切換；不與背景子代理並行切換。
+    if (turn > 1 && autoHandoff && typeof bridge.conversationUsage === 'function' && typeof bridge.newConversation === 'function') {
+      let usage = null;
+      try {
+        usage = bridge.conversationUsage();
+      } catch (e) {
+        onLog(`[agent] 無法讀取上下文用量，略過自動交接：${e.message}`);
+      }
+      // 瀏覽器剛切換時仍可能回報舊對話的累積量。確認重置後才允許再次交接。
+      if (waitingForUsageReset && usage && Number(usage.chars) < lastHandoffUsageChars * 0.5) {
+        waitingForUsageReset = false;
+      }
+      const decision = decideAutoHandoff({
+        enabled: true, usage, window: contextWindow, count: handoffs,
+        max: maxHandoffs, pending: 背景ののこり(),
+      });
+      if (decision.handoff && !waitingForUsageReset) {
+        if (shouldStop()) return { status: 'stopped', reason: '利用者が中断した', startSha, turns: turn - 1, history };
+        const carry = buildHandoffMessage({
+          task, todos: lastTodos,
+          answers: history.map((h) => h.answer),
+          journal: handoffJournal,
+          lastResults: 最後の結果 || [],
+          pending: message,
+        });
+        const beforeId = typeof bridge.conversationId === 'function' ? bridge.conversationId() : '';
+        onLog(`[agent] 上下文估算已達 ${(decision.ratio * 100).toFixed(1)}%，開始自動交接（${handoffs + 1}/${maxHandoffs}）`);
+        let opened;
+        try {
+          opened = await bridge.newConversation(undefined, {
+            reason: 'auto-context-handoff', actor: 'agent-auto', gapMs: RESTART_GAP_MS,
+          });
+          if (!opened || opened.fresh !== true) throw new Error('未確認新對話（fresh !== true）');
+          const afterId = typeof bridge.conversationId === 'function' ? bridge.conversationId() : '';
+          if (!afterId) throw new Error('無法確認新對話 ID');
+          if (beforeId && beforeId === afterId) throw new Error('新舊對話 ID 相同');
+        } catch (e) {
+          onLog(`[agent] 自動交接失敗，停止並保留工作紀錄：${e.message}`);
+          if (onNotice) onNotice({ kind: 'autoHandoffFailed', why: e.message });
+          return { status: 'stopped', reason: `自動交接失敗：${e.message}`, startSha, turns: turn - 1, history, lastResults: 最後の結果 };
+        }
+        handoffs += 1;
+        for (const fingerprint of successfulMutations) protectedMutations.add(fingerprint);
+        lastHandoffUsageChars = Number((usage && usage.chars) || 0);
+        waitingForUsageReset = lastHandoffUsageChars > 0;
+        送った字 = 0;
+        remindedDeadModel = false;
+        対話で呼べた = 0;
+        呼べると思い出させた = false;
+        lastCall = null;
+        sameCallRow = 0;
+        silent = 0;
+        firstSilentAnswer = '';
+        firstMessage = '';
+        最後の結果 = null;
+        message = (handoffRules ? handoffRules + '\n\n' : '') + carry;
+        onLog(`[agent] 新對話已建立；原目標、待辦與最近工具結果已帶入，跨回合防止重做 ${protectedMutations.size} 筆交接前已成功的副作用操作`);
+        if (onNotice) onNotice({ kind: 'autoHandoff', n: handoffs, max: maxHandoffs, ratio: decision.ratio });
+      }
     }
 
     const prev = history.length ? history[history.length - 1].answer : '';
@@ -1882,6 +1955,18 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
         continue;
       }
 
+      const mutationId = mutationFingerprint(call);
+      if (handoffs > 0 && mutationId && protectedMutations.has(mutationId)) {
+        const duplicate = {
+          id: call.id, tool: call.bridge_tool, ok: false, target: targetOf(call), askedAgain: true,
+          output: '這項具有副作用的操作在交接前已成功執行，已阻止重複執行。請先使用唯讀工具核對實際狀態，再決定是否需要其他操作。',
+        };
+        onLog(`[agent] 自動交接重複操作已攔截：${call.bridge_tool} ${targetOf(call)}`);
+        onTool(duplicate);
+        results.push(duplicate);
+        continue;
+      }
+
       const print = callFingerprint(call);
       if (print === lastCall) {
         sameCallRow += 1;
@@ -2019,6 +2104,9 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
           if (post.why) onLog(`[hook] ${post.why.slice(0, 200)}`);
         }
         const tookMs = Date.now() - toolAt;
+        handoffJournal.push({ tool: call.bridge_tool, target: r.target || targetOf(call), ok: !!r.ok, output: String(r.output || '').slice(0, 500) });
+        if (handoffJournal.length > 40) handoffJournal.shift();
+        if (r.ok && mutationId) successfulMutations.add(mutationId);
         onLog(`[agent] ${call.bridge_tool} ${r.target || ''} → ${r.ok ? 'ok' : '失敗'}`);
         if (r.ok && (call.bridge_tool === 'write_file' || call.bridge_tool === 'edit_file')) {
           wroteAny = true;
@@ -2065,6 +2153,8 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
           ...(call.command ? { command: String(call.command).slice(0, 200) } : {}),
         });
         onLog(`[agent] ${call.bridge_tool} → 失敗: ${e.message}`);
+        handoffJournal.push({ tool: call.bridge_tool, target: targetOf(call), ok: false, output: String(e.message || '').slice(0, 500) });
+        if (handoffJournal.length > 40) handoffJournal.shift();
         const failed = {
           id: call.id,
           tool: call.bridge_tool,

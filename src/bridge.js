@@ -1680,6 +1680,7 @@ function openBridge({
         'recovery-no-call': 'agent-recovery',
         'recovery-bad-format': 'agent-recovery',
         'recovery-downgraded': 'agent-recovery',
+        'auto-context-handoff': 'agent-auto',
       };
       const expectedActor = lifecycleActors[lifecycleReason];
       if (!expectedActor || lifecycleActor !== expectedActor) {

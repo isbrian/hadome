@@ -270,6 +270,8 @@ module.exports = {
   'goal.cleared': '已取消目標。',
   'note.switching': '正在切換到新的對話…',
   'note.switchFailed': '切換失敗：{why}',
+  'note.autoHandoff': '上下文估算已達 {pct}%，已自動開啟新對話並接續任務（{n}/{max}）',
+  'note.autoHandoffFailed': '自動交接失敗，已停止以避免重複操作：{why}',
   'note.movingTab': '正在把分頁移到那段對話…',
   'note.replayHead': '— 以上是上次的延續（{n} 筆）—',
   'row.failed': '這一列顯示不出來（格式讀不到）',
