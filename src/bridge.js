@@ -29,6 +29,7 @@ const portlock = require('./portlock');
 
 const { noteStreamCut, fileOf: streamCutsFileOf } = require('./streamcuts');
 const { pathHits } = require('./tabpick');
+const { acceptsRoster, acceptsHello } = require('./bridge-port-guard');
 const { projectIdOf } = require('./conversation');
 const { createLiveness, noteLiveness, shouldStall } = require('./liveness');
 
@@ -386,6 +387,8 @@ function openBridge({
             return;
           }
           if (m.type === 'roster') {
+            // 試験専用枠へ通常ブラウザーの全タブ一覧を流入させない。
+            if (!acceptsRoster(openedPort)) return;
             const id = typeof m.pluginId === 'string' ? m.pluginId : '';
             const windows = Array.isArray(m.windows) ? m.windows : [];
             const count = windows.reduce((n, w) => n + ((w && w.tabs && w.tabs.length) || 0), 0);
@@ -456,6 +459,13 @@ function openBridge({
             return;
           }
           if (m.type === 'hello') {
+            // 古い拡張機能や通常タブの自動再接続を試験枠へ受け入れない。
+            if (!acceptsHello(openedPort, m)) {
+              onLog('[bridge:8799] 専用枠を明示していないタブを拒否しました');
+              try { ws.send(JSON.stringify({ type: 'not_target' })); } catch {}
+              try { ws.close(); } catch {}
+              return;
+            }
 
             if (m.thinking && typeof m.thinking === 'object') {
               try {
@@ -906,19 +916,17 @@ function openBridge({
             if (w.abortWatch) clearInterval(w.abortWatch);
 
             if (w.text) {
-              onLog(`[bridge] 途中で切れました（${m.message}）。ここまでの ${w.text.length} 文字で続けます`);
-              w.resolve(w.text);
-              return;
+              onLog(`[bridge] 途中で切れました（${m.message}）。${w.text.length} 文字を受信しましたが、完了未確認のため停止します`);
             }
 
-            const e = new Error(m.message);
+            const e = new Error(String(m.message || 'stream error'));
+            e.partialText = w.text;
 
             const refused = Number(m.status) > 0;
-
-            e.delivered = !!w.submitted;
+            e.delivered = !!w.submitted || !!w.text;
 
             const sendButtonMissing = !w.submitted && String(m.code || '') === 'waitTimeout';
-            e.transient = (!refused && !w.submitted) || sendButtonMissing;
+            e.transient = !e.delivered && ((!refused && !w.submitted) || sendButtonMissing);
             e.refused = refused;
             e.status = Number(m.status) || 0;
 
@@ -954,14 +962,13 @@ function openBridge({
             clearInterval(w.watch);
             if (w.abortWatch) clearInterval(w.abortWatch);
             if (w.text) {
-              onLog(`[bridge] タブが切れました。ここまでの ${w.text.length} 文字で続けます`);
-              w.resolve(w.text);
-            } else {
-              const e = new Error(t('br.tabCutMid'));
-              e.delivered = !!w.submitted;
-              e.transient = !w.submitted;
-              w.reject(e);
+              onLog(`[bridge] タブが切れました。${w.text.length} 文字を受信しましたが、完了未確認のため停止します`);
             }
+            const e = new Error(t('br.tabCutMid'));
+            e.partialText = w.text;
+            e.delivered = !!w.submitted || !!w.text;
+            e.transient = !e.delivered;
+            w.reject(e);
           }
           if (!closed) onLog('[bridge] 対象タブが切れました');
         });
@@ -979,7 +986,8 @@ function openBridge({
 
       }
 
-      if (!c || c.port === openedPort) return;
+      // 試験枠から通常セッションを奪わない。
+      if (!c || c.port === openedPort || !acceptsRoster(c.port)) return;
 
       if (!sock || sock.readyState !== 1) return;
       if (waiting) {
@@ -1099,7 +1107,8 @@ function openBridge({
         const askTimer = setTimeout(() => {
           if (sock && tabProtocol) return;
           const others = liveOthers();
-          if (!others.length) return;
+          // 試験枠は他の稼働セッションに譲渡を要求しない。
+          if (!others.length || !acceptsRoster(openedPort)) return;
           onLog(
             `[bridge:${openedPort}] タブが来ないので、譲ってくれと頼みます` +
               `（いま握っている見込み: ${others.map((o) => o.port).join(' / ')}）`
