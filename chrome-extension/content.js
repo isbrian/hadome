@@ -258,6 +258,8 @@
         title: document.title,
         protocol: TAB_PROTOCOL,
         tabId: TAB_ID,
+        // 専用試験枠は URL または同一タブの sessionStorage で明示的に指定した場合だけ名乗る。
+        pinnedPort: pinnedPort() === port ? port : 0,
 
         pluginId: PLUGIN_ID,
 
@@ -1867,6 +1869,8 @@
 
       const 呼ばれてよい = (枠 >= 8765 && 枠 <= 8779 && !SKIP.includes(枠)) || 枠 === 8799;
       if (!呼ばれてよい) return;
+      // 試験枠への移動は、このタブが明示的に試験枠を指定した場合だけ許す。
+      if (枠 === 8799 && pinnedPort() !== 8799) return;
       if (tryPort === 枠 && alive) return;
       console.log(`[bridge] 枠 ${枠} へ繋ぎ直します（エディターに呼ばれた）`);
       tryPort = 枠;

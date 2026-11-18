@@ -250,7 +250,9 @@ const ROSTER_FROM = 8765;
 const ROSTER_TO = 8779;
 const ROSTER_SKIP = [8767, 8768, 8769];
 
-const ROSTER_EXTRA = [8799];
+// テスト専用 8799 は通常ブラウザーの探索対象に含めない。
+// 専用タブは bridge_port=8799 を指定して直接接続する。
+const ROSTER_EXTRA = [];
 const ROSTER_MS = 30000;
 
 function rosterPayload(done) {
@@ -440,10 +442,24 @@ function 名乗る(定時 = false) {
         chrome.tabs.query({ url: 'https://chatgpt.com/*' }, (tabs) => {
           void chrome.runtime.lastError;
 
+          // 別の対話を部分一致で拾わない。番号を指定された場合は代替候補へ落とさない。
+          let 目標;
+          try {
+            目標 = new URL(道, 'https://chatgpt.com');
+          } catch {
+            return;
+          }
+          if (目標.origin !== 'https://chatgpt.com') return;
+          const 候補 = (tabs || []).filter((x) => {
+            try {
+              const u = new URL(String(x.url || ''));
+              return u.origin === 目標.origin && u.pathname === 目標.pathname;
+            } catch {
+              return false;
+            }
+          });
           const 番号 = Number.isInteger(m.chromeTabId) ? m.chromeTabId : null;
-          const 当たり =
-            (番号 !== null && (tabs || []).find((x) => x.id === 番号 && String(x.url || '').includes(道))) ||
-            (tabs || []).find((x) => String(x.url || '').includes(道));
+          const 当たり = 番号 !== null ? 候補.find((x) => x.id === 番号) : (候補.length === 1 ? 候補[0] : null);
           if (!当たり) return;
           try {
             chrome.tabs.sendMessage(当たり.id, { kind: 'dial', port: p });

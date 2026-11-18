@@ -652,7 +652,11 @@
         }
       }
     } catch (err) {
-      post('error', { requestId, message: String((err && err.message) || err) });
+      const completed = isComplete();
+      if (!ctx.wsDone && !ctx.handoffTopic) {
+        if (completed) post('done', { requestId, text: assembled, complete: true });
+        else post('error', { requestId, message: String((err && err.message) || err) });
+      }
 
       post('stream_cut', {
         requestId,
@@ -663,7 +667,7 @@
         events,
         bytes,
         chars: assembled.length,
-        complete: false,
+        complete: completed,
         message: String((err && err.message) || err),
         head,
         tail,
