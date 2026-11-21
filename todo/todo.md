@@ -234,7 +234,7 @@ chatgpt.com 分頁也要重載 ← 協定 60→61，只做前一半不夠
 
 | ID | 狀態 | 類型 | 需求 | 驗收條件與交付 | 相依 | 重試次數 | 暫停原因 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| T-029 | ⏸️ 暫停 | 前置 | 取得隔離 Canary 與 VSCodium 視窗的可控性 | 只核對 CUA/browser host 能否定位隔離視窗，並取得視窗／profile 身分證據；若仍只選到既有視窗，記錄具體錯誤與可恢復入口，不操作既有頁面、不做 E2E | — | 0 | 目前 CUA browser host unavailable，原生 App 選取器未定位隔離視窗 |
+| T-029 | ⏸️ 暫停 | 前置 | 取得隔離 Canary 與 VSCodium 視窗的可控性 | 只核對 CUA/browser host 能否定位隔離視窗，並取得視窗／profile 身分證據；若仍只選到既有視窗，記錄具體錯誤與可恢復入口，不操作既有頁面、不做 E2E；本輪證據見[分析報告](../report/T-029_隔離視窗可控性_2026-11-22_分析報告.md) | — | 0 | CUA `getState()` 回報 `Browsers: Error: The browser access host is unavailable`；Canary App 選取器仍不能定位隔離視窗。CDP 9445／PID 55668 可辨識隔離 Canary（`chrome://whats-new/`），但不足以取得 CUA 視窗控制權；待 browser host 恢復後，以隔離 profile／9445 明確定位視窗再續作 |
 | T-030 | 待執行 | 前置 | 在隔離 Canary profile 載入 Hadome 瀏覽器擴充功能 | 透過可見 Chrome UI 載入 repo 的 `chrome-extension/`；核對版本、權限、profile 路徑與擴充啟用狀態。不得使用 `--load-extension`，不得改正式 profile | T-029 | 0 | — |
 | T-031 | 待執行 | 前置 | 建立專用 ChatGPT 測試 Project 與對話 | 在隔離 profile 中確認登入狀態，建立專用測試 Project／對話，記錄 URL、Project 與 conversation ID；不記錄或傳遞登入憑證，不使用既有工作對話 | T-030 | 0 | — |
 | T-032 | 待執行 | 前置 | 啟動隔離 VSCodium Bridge 8799 | 使用隔離 VSCodium 設定與隔離 profile；只由測試面板建立 Bridge，證明 8799 listener 的 PID／程序來源，且正式 8765 未增加測試連線 | T-029 | 0 | — |
