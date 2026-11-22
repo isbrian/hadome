@@ -257,8 +257,8 @@ chatgpt.com 分頁也要重載 ← 協定 60→61，只做前一半不夠
 
 | ID | 狀態 | 類型 | 需求 | 驗收條件與交付 | 相依 | 重試次數 | 暫停原因 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| T-045 | 待執行 | 分析 | 盤點既有覆蓋與固定測試契約 | 對照 E2E-00～11 與現有 Node tests，列出已覆蓋／缺口／必要真實元件；盤點 Chromium、Node、Playwright、editor 版本與可重用入口，提出逐項工作量及未確認事項；交付覆蓋矩陣與可執行契約，不重寫測試框架 | — | 0 | — |
-| T-046 | 待執行 | 實作 | 建立隔離執行紀錄與每案例清理 | 建立 runId、暫存根目錄、profile／workspace／ports／PID owner manifest、逾時與 finally 清理；驗證成功／assertion 失敗／取消能釋放自有程序，強制終止留下復原紀錄；不碰正式 8765 或既有 profile | T-045 | 0 | — |
+| T-045 | ✅ 完成 | 分析 | 盤點既有覆蓋與固定測試契約 | 對照 E2E-00～11 與現有 Node tests，列出已覆蓋／缺口／必要真實元件；盤點 Chromium、Node、Playwright、editor 版本與可重用入口，提出逐項工作量及未確認事項；交付覆蓋矩陣與可執行契約，不重寫測試框架 | — | 0 | — |
+| T-046 | ✅ 完成 | 實作 | 建立隔離執行紀錄與每案例清理 | 建立 runId、暫存根目錄、profile／workspace／ports／PID owner manifest、逾時與 finally 清理；驗證成功／assertion 失敗／取消能釋放自有程序，強制終止留下復原紀錄；不碰正式 8765 或既有 profile | T-045 | 0 | — |
 | T-047 | 待執行 | 實證 | 自動載入原始 MV3 擴充並完成 Bridge 握手 | 使用版本固定的相容 Chromium persistent context、原始 manifest 與隔離 Bridge；證明 service worker、content script hello、welcome、protocol、pinnedPort 與 tab/profile 對應，錯 pin 拒絕；無 CUA／登入；交付最小可重跑實證，失敗即暫停瀏覽器後續 | T-046 | 0 | — |
 | T-048 | 待執行 | 實作 | 建立受控 ChatGPT 頁面與 SSE fixture | 實作最小 composer／Project／conversation 路徑與合成 HTTP/SSE 契約；驗證 MAIN world fetch 攔截與未匹配外網 fail-closed，真實 auth／conversation 外送為零；保留正式擴充權限，交付 fixture 說明與網路稽核 | T-047 | 0 | — |
 | T-049 | 待執行 | 驗證 | 驗證真實擴充與 Bridge 正常串流鏈路 | prompt 經 Bridge 到 DOM，再由 fixture fetch 經 injected/content 回傳；assert partial、complete、文字、conversation ID；不得直接呼叫完成 callback；保存 log／trace、assertion、exit code 與清理證據 | T-048 | 0 | — |
