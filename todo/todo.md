@@ -250,3 +250,26 @@ chatgpt.com 分頁也要重載 ← 協定 60→61，只做前一半不夠
 | T-042 | 待執行 | 驗證 | 執行 E2E-09：導航失敗或 ID 異常時安全停止 | 在隔離對話注入核定的導航失敗／ID 異常；核對系統停止交接、保留錯誤證據，且不重試、不寫入非目標分頁 | T-033 | 0 | — |
 | T-043 | 待執行 | 診斷 | 單獨定位 E2E-10 的 AbortSignal 中止來源 | 先以日誌確認 `signal is aborted without reason` 是否重現，再沿事件與呼叫鏈定位來源；交付證據、根因或明確未定原因。若需產品修正，另開工單，不混入本診斷 | T-033 | 0 | — |
 | T-044 | 待執行 | 收尾 | 執行 E2E-11：復原隔離環境並核對 Git／連接埠 | 停止本系列自行啟動的隔離程序，復原隔離設定；核對 8765／8799／9445、Git 狀態與非本任務變更，更新總驗收報告。不得關閉或清理所有權不明的程序／資料 | T-034～T-043 | 0 | — |
+
+## T-045～T-060 E2E 可重現驗證與分層驗收（2026-11-23）
+
+> 使用者已採用分層驗證方案。本系列依[完整規格](./spec/e2e-testability.md)執行，每張只處理一項能力並產出 task-report。T-045～T-058 不依賴 T-029 或 CUA；T-059 由 Brian 人工驗收真實 Canary／VSCodium／ChatGPT。舊工單狀態保留，透過 T-060 的逐項證據對照處理驗收範圍變更，不能以 fixture 通過宣稱實機 PASS。所有新工單目前均尚未執行。
+
+| ID | 狀態 | 類型 | 需求 | 驗收條件與交付 | 相依 | 重試次數 | 暫停原因 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| T-045 | 待執行 | 分析 | 盤點既有覆蓋與固定測試契約 | 對照 E2E-00～11 與現有 Node tests，列出已覆蓋／缺口／必要真實元件；盤點 Chromium、Node、Playwright、editor 版本與可重用入口，提出逐項工作量及未確認事項；交付覆蓋矩陣與可執行契約，不重寫測試框架 | — | 0 | — |
+| T-046 | 待執行 | 實作 | 建立隔離執行紀錄與每案例清理 | 建立 runId、暫存根目錄、profile／workspace／ports／PID owner manifest、逾時與 finally 清理；驗證成功／assertion 失敗／取消能釋放自有程序，強制終止留下復原紀錄；不碰正式 8765 或既有 profile | T-045 | 0 | — |
+| T-047 | 待執行 | 實證 | 自動載入原始 MV3 擴充並完成 Bridge 握手 | 使用版本固定的相容 Chromium persistent context、原始 manifest 與隔離 Bridge；證明 service worker、content script hello、welcome、protocol、pinnedPort 與 tab/profile 對應，錯 pin 拒絕；無 CUA／登入；交付最小可重跑實證，失敗即暫停瀏覽器後續 | T-046 | 0 | — |
+| T-048 | 待執行 | 實作 | 建立受控 ChatGPT 頁面與 SSE fixture | 實作最小 composer／Project／conversation 路徑與合成 HTTP/SSE 契約；驗證 MAIN world fetch 攔截與未匹配外網 fail-closed，真實 auth／conversation 外送為零；保留正式擴充權限，交付 fixture 說明與網路稽核 | T-047 | 0 | — |
+| T-049 | 待執行 | 驗證 | 驗證真實擴充與 Bridge 正常串流鏈路 | prompt 經 Bridge 到 DOM，再由 fixture fetch 經 injected/content 回傳；assert partial、complete、文字、conversation ID；不得直接呼叫完成 callback；保存 log／trace、assertion、exit code 與清理證據 | T-048 | 0 | — |
+| T-050 | 待執行 | 驗證 | 驗證串流中斷與 AbortSignal 安全停止 | SSE 中斷、明確 abort、WebSocket 斷線分開重現；assert partial 不當成功、不自動重送或執行殘缺工具；交付各來源事件鏈，清楚區分合成重現與 T-043 歷史線上根因，後者未定不得結案 | T-049 | 0 | — |
+| T-051 | 待執行 | 驗證 | 驗證估算閾值、新對話與兩回合續作 | 經真實擴充／Bridge／Agent 驗證停用、低於／等於／高於 75% 估算邊界；啟用觸發 fresh=true、新舊 ID 不同、同 Project、交接內容與兩回合續作；縮小隔離 contextWindow，記錄輸入與估算公式 | T-049 | 0 | — |
+| T-052 | 待執行 | 驗證 | 驗證副作用、交接上限與背景抑制 | 獨立案例驗證交接後重複 write_file 被阻止且暫存檔雜湊符合預期、maxHandoffs=1 阻止第二次切換、背景 pending 抑制及結束後重新評估；重用現有測試，補真實傳輸覆蓋，交付三類證據 | T-051 | 0 | — |
+| T-053 | 待執行 | 驗證 | 驗證導航與對話所有權異常 | 導航失敗、相同 ID、缺失 ID、錯 Project、錯 tab 分別注入；assert 安全停止且不向非目標 tab 送 prompt 或執行工具；每例獨立 profile 與清理，交付錯誤及負向證據 | T-051 | 0 | — |
+| T-054 | 待執行 | 驗證 | 驗證多組隔離環境不互搶 | 兩組獨立 context／Bridge，驗證顯式 pin、roster 邊界與所有權；停止一組另一組正常，不連正式 8765；動態埠須與測試埠具有同等隔離；交付程序／profile／tab／port 對照 | T-049 | 0 | — |
+| T-055 | 待執行 | 實證 | 建立 Extension Development Host 測試啟動入口 | 以專用 user-data／extensions／workspace 及 extensionTestsPath 啟動原始擴充，取得 activation 證據並自動退出；分別記錄 VS Code／VSCodium 相容性；VSCodium 未通過時保留線上人工驗收要求 | T-046 | 0 | — |
+| T-056 | 待執行 | 驗證 | 驗證編輯器設定與 Bridge 生命週期接線 | 從正式命令／面板可測入口建立隔離 Bridge，核對設定讀取、8799 listener owner、重複啟動與 dispose 釋放；必要時最小抽取共用內部入口，不加 production bypass；保存設定前後差異與程序證據 | T-055、T-047 | 0 | — |
+| T-057 | 待執行 | 實作 | 統一測試命令、單例重跑與機器可讀報告 | 提供 Node、browser integration、editor integration 分開命令與 case 選取；輸出 runId／commit／版本／預期實際／exit code／artifact 路徑；未執行不可 PASS，保護日誌並排除 VSIX；交付操作說明 | T-050、T-052、T-053、T-054、T-056 | 0 | — |
+| T-058 | 待執行 | 驗證 | 驗證可重跑性、失敗清理與強制終止復原 | 至少兩次全新 profile 全套重跑及指定 case 單跑；驗證失敗／timeout／取消清理、一次強制終止後依 owner manifest 安全復原；核對外網零外送、正式工作區／設定未變與殘存程序，交付完整 fresh evidence | T-057 | 0 | — |
+| T-059 | 待執行 | 人工驗收 | 完成隔離 Canary／VSCodium 線上相容性驗收 | 提供可直接照做的步驟與遮蔽證據模板，由 Brian 在專用登入 profile 安裝／確認擴充並啟動 Bridge；核對所有權、停用交接多回合、啟用後切新 ID、同 Project/tab、交接內容及兩回合續作；每例復原設定與程序，不等待 CUA；未取得人工結果維持未完成 | T-058 | 0 | — |
+| T-060 | 待執行 | 收尾 | 更新舊 E2E 覆蓋矩陣與 T-019 驗收結論 | 逐項對照 T-029～T-044／E2E-00～11，標示離線／受控整合／實機人工證據與範圍變更；保留未定 AbortSignal 根因，不偽標舊實機 PASS；取得 Brian 驗收、清理核對及缺口處置後才判定 T-019 可否結案，交付總報告與接手入口 | T-059 | 0 | — |
