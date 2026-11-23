@@ -1,0 +1,86 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+
+const source = fs.readFileSync(path.join(__dirname, '../chrome-extension/content.js'), 'utf8');
+
+function createPinnedTab() {
+  const sockets = [];
+  const timers = new Map();
+  const session = new Map();
+  let timerId = 0;
+
+  class Socket {
+    constructor(url) {
+      this.url = url;
+      this.readyState = 0;
+      sockets.push(this);
+    }
+    send() {}
+    close() { this.fail(); }
+    fail() {
+      this.readyState = 3;
+      if (this.onclose) this.onclose();
+    }
+  }
+
+  const context = {
+    URL,
+    URLSearchParams,
+    location: { href: 'https://chatgpt.com/?bridge_port=8799', search: '?bridge_port=8799' },
+    document: { title: '隔離測試', querySelectorAll: () => [], querySelector: () => null, addEventListener() {} },
+    window: { addEventListener() {} },
+    navigator: { userAgent: 'isolated-test' },
+    sessionStorage: {
+      getItem: (k) => session.get(k) || null,
+      setItem: (k, v) => session.set(k, String(v)),
+      removeItem: (k) => session.delete(k),
+    },
+    chrome: {
+      storage: { local: {
+        get(k, cb) { cb(k === 'pluginId' ? { pluginId: 'isolated-plugin' } : {}); },
+        set() {},
+      } },
+      runtime: {
+        lastError: null,
+        sendMessage(_msg, cb) { cb({ chromeTabId: 47 }); },
+        onMessage: { addListener() {} },
+      },
+    },
+    WebSocket: Socket,
+    setTimeout(fn, ms) { const id = ++timerId; timers.set(id, { fn, ms }); return id; },
+    clearTimeout(id) { timers.delete(id); },
+    setInterval() { return 0; },
+    clearInterval() {},
+    console: { log() {}, warn() {}, error() {} },
+  };
+
+  vm.runInNewContext(source, context, { filename: 'chrome-extension/content.js' });
+  function runNextTimer() {
+    const pending = [...timers.entries()];
+    assert.ok(pending.length, '預期已有重新連線計時器');
+    const [id, timer] = pending[0];
+    timers.delete(id);
+    timer.fn();
+  }
+  return { sockets, runNextTimer };
+}
+
+test('T-047：明確釘選 8799 的分頁連線失敗後不可退回正式 8765', async () => {
+  const tab = createPinnedTab();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(tab.sockets.length, 1, '應先連線至釘選的測試埠');
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const socket = tab.sockets.at(-1);
+    assert.equal(socket.url, 'ws://127.0.0.1:8799', `第 ${attempt + 1} 次嘗試不得碰正式服務`);
+    socket.fail();
+    tab.runNextTimer();
+  }
+  assert.ok(tab.sockets.length >= 6);
+  assert.ok(tab.sockets.every((socket) => socket.url === 'ws://127.0.0.1:8799'));
+});

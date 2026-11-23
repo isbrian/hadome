@@ -305,6 +305,17 @@
     sock.onclose = () => {
       alive = false;
 
+      if (pinnedPort() === 8799) {
+        pinned = 8799;
+        pinnedFallback = 0;
+        scanningAfterPinnedFailure = false;
+        pinnedFailures = 0;
+        tryPort = 8799;
+        jumping = false;
+        setTimeout(connect, restMs());
+        return;
+      }
+
       if (jumping) {
         jumping = false;
         searched = 0;
