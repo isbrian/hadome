@@ -31,7 +31,7 @@ function mock(tabs) {
   vm.runInContext('名乗る(true)', context);
   const socket = sockets.find(s => s.url.endsWith(':8765'));
   for (const s of sockets) if (s.onopen) s.onopen();
-  return { sockets, dials, removed, roster: socket?.sent[0], request: m => socket.onmessage({ data: JSON.stringify(m) }) };
+  return { context, sockets, dials, removed, roster: socket?.sent[0], request: m => socket.onmessage({ data: JSON.stringify(m) }) };
 }
 const tab = (id, key) => ({ id, windowId: 1, active: true, url: 'https://chatgpt.com/c/' + key });
 test('通常ブラウザーは試験枠を探索しない', () => {
@@ -105,4 +105,38 @@ test('枠を確認できないタブは通常枠の探索・操作から除外�
   assert.equal(h.dials.length, 0);
   h.request({ type: 'closeTabs' });
   assert.deepEqual(h.removed, [11]);
+});
+
+// 実時間を待たず、content の応答順序と期限切れを再現する。
+test('期限切れのタブを除外し、遅延応答で確定済みの結果を変更しない', () => {
+  const h = mock([tab(11, 'normal'), tab(47, 'pending')]);
+  const replies = new Map();
+  let expire;
+  h.context.setTimeout = (fn, ms) => { assert.equal(ms, 1500); expire = fn; return 1; };
+  h.context.clearTimeout = () => {};
+  h.context.chrome.tabs.sendMessage = (id, message, reply) => {
+    assert.equal(message.kind, 'which_port');
+    replies.set(id, reply);
+  };
+  const results = [];
+  const query = vm.runInContext('queryOrdinaryTabs', h.context);
+  query((tabs, error) => { assert.equal(error, null); results.push(Array.from(tabs, t => t.id)); });
+  replies.get(11)({ port: 0 });
+  assert.equal(results.length, 0);
+  expire();
+  assert.deepEqual(results, [[11]]);
+  replies.get(47)({ port: 8765 });
+  expire();
+  assert.deepEqual(results, [[11]]);
+});
+
+test('content が準備できた通常タブは次回の照会で復帰する', () => {
+  const h = mock([tab(11, 'normal'), { ...tab(47, 'starting'), reportedPort: null }]);
+  const query = vm.runInContext('queryOrdinaryTabs', h.context);
+  const results = [];
+  const collect = (tabs, error) => { assert.equal(error, null); results.push(Array.from(tabs, t => t.id)); };
+  query(collect);
+  h.context.chrome.tabs.sendMessage = (id, message, reply) => reply({ port: id === 47 ? 8765 : 0 });
+  query(collect);
+  assert.deepEqual(results, [[11], [11, 47]]);
 });
