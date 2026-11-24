@@ -8,7 +8,7 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '../chrome-extension/content.js'), 'utf8');
 
-function createPinnedTab() {
+function createPinnedTab({ dropPluginIdResponse = false } = {}) {
   const sockets = [];
   const timers = new Map();
   const session = new Map();
@@ -42,7 +42,10 @@ function createPinnedTab() {
     },
     chrome: {
       storage: { local: {
-        get(k, cb) { cb(k === 'pluginId' ? { pluginId: 'isolated-plugin' } : {}); },
+        get(k, cb) {
+          if (dropPluginIdResponse && k === 'pluginId') return;
+          cb(k === 'pluginId' ? { pluginId: 'isolated-plugin' } : {});
+        },
         set() {},
       } },
       runtime: {
@@ -69,6 +72,18 @@ function createPinnedTab() {
   }
   return { sockets, runNextTimer };
 }
+
+test('T-047：extension storage 回呼未返回時仍須啟動釘選連線', async () => {
+  const tab = createPinnedTab({ dropPluginIdResponse: true });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(tab.sockets.length, 0, '回呼未返回前不得假裝已經連線');
+  tab.runNextTimer();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(tab.sockets.length, 1, '等待逾時後仍必須建立連線');
+  assert.equal(tab.sockets[0].url, 'ws://127.0.0.1:8799', '逾時不可改連正式 8765');
+});
 
 test('T-047：明確釘選 8799 的分頁連線失敗後不可退回正式 8765', async () => {
   const tab = createPinnedTab();

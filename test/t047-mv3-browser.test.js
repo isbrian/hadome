@@ -42,6 +42,11 @@ test('T-047：獨立 Chromium 真實載入原始 MV3，content hello 與隔離 B
       ],
     });
 
+    // 合成頁不能操作真實 Chrome 權限提示；隔離 Gate 明確授權，拒絕／未授權模式需另行指定。
+    evidence.loopbackGrantRequested = process.env.T047_LOOPBACK_DENY !== '1' && process.env.T047_LOOPBACK_UNGRANTED !== '1';
+    if (evidence.loopbackGrantRequested) {
+      await context.grantPermissions(['local-network-access'], { origin: 'https://chatgpt.com' });
+    }
     const existingWorkers = context.serviceWorkers();
     const worker = existingWorkers.find((w) => w.url().endsWith('/background.js')) ||
       await context.waitForEvent('serviceworker', { timeout: 8000,
@@ -73,10 +78,39 @@ test('T-047：獨立 Chromium 真實載入原始 MV3，content hello 與隔離 B
     page.on('websocket', (socket) => evidence.wsAttempts.push(socket.url()));
     const session = await context.newCDPSession(page);
     session.on('Runtime.exceptionThrown', (event) => evidence.pageErrors.push(String(event.exceptionDetails?.text || '') + ' ' + String(event.exceptionDetails?.exception?.description || '').slice(0, 500)));
-    session.on('Runtime.executionContextCreated', (event) => evidence.executionContexts.push({ name: event.context?.name || '', origin: event.context?.origin || '', isDefault: !!event.context?.auxData?.isDefault }));
+    session.on('Runtime.executionContextCreated', (event) => evidence.executionContexts.push({ contextId: event.context?.id, name: event.context?.name || '', origin: event.context?.origin || '', isDefault: !!event.context?.auxData?.isDefault }));
     await session.send('Runtime.enable');
+    // T-047：只記錄隔離測試頁的 WebSocket 網路事件，不改動擴充功能的連線行為。
+    evidence.cdpWebSockets = [];
+    const recordSocket = (phase, event) => evidence.cdpWebSockets.push({
+      phase,
+      requestId: event.requestId || null,
+      url: event.url || (event.request && event.request.url) || null,
+      errorMessage: event.errorMessage || null,
+      responseStatus: event.response && event.response.status || null,
+    });
+    for (const [eventName, phase] of [
+      ['Network.webSocketCreated', 'created'],
+      ['Network.webSocketWillSendHandshakeRequest', 'handshake-request'],
+      ['Network.webSocketHandshakeResponseReceived', 'handshake-response'],
+      ['Network.webSocketFrameError', 'frame-error'],
+      ['Network.webSocketClosed', 'closed'],
+    ]) session.on(eventName, (event) => recordSocket(phase, event));
+    await session.send('Network.enable');
+    evidence.loopbackDenyRequested = process.env.T047_LOOPBACK_DENY === '1';
+    if (evidence.loopbackDenyRequested) {
+      await context.grantPermissions([], { origin: 'https://chatgpt.com' });
+    }
     await page.goto('https://chatgpt.com/?bridge_port=8799', { waitUntil: 'domcontentloaded', timeout: 12000 });
     assert.equal(await page.locator('#fixture').count(), 1);
+    // 僅觀察隔離 profile 的本機網路權限，不修改正式使用者設定。
+    evidence.loopbackPermission = await page.evaluate(async () => {
+      try {
+        return (await navigator.permissions.query({ name: 'loopback-network' })).state;
+      } catch (error) {
+        return 'unavailable: ' + String(error).slice(0, 180);
+      }
+    });
 
     // 新 profile 第一次導覽可能早於 MV3 manifest content script 註冊完成；只在同一隔離 profile 最多導覽三次。
     evidence.navigationAttempts = [];
@@ -86,6 +120,35 @@ test('T-047：獨立 Chromium 真實載入原始 MV3，content hello 與隔離 B
       evidence.navigationAttempts.push({ attempt, connected: bridge.connected(), isolatedWorlds: evidence.executionContexts.filter((item) => item.origin.startsWith('chrome-extension://')).length, wsAttempts: evidence.wsAttempts.length });
       if (bridge.connected()) break;
       if (attempt < 3) await page.reload({ waitUntil: 'domcontentloaded', timeout: 12000 });
+    }
+    // T-047 診斷：只在隔離測試失敗時檢查原始 MV3 isolated world 的 API 回應，不注入或代送 hello。
+    if (!bridge.connected()) {
+      evidence.isolatedProbes = [];
+      for (const world of evidence.executionContexts.filter((item) => item.origin.startsWith('chrome-extension://')).slice(-3)) {
+        try {
+          const result = await session.send('Runtime.evaluate', {
+            contextId: world.contextId,
+            expression: `(async () => {
+              const timeout = (ms) => new Promise(resolve => setTimeout(() => resolve({ timeout: true }), ms));
+              const storage = await Promise.race([
+                new Promise(resolve => { try { chrome.storage.local.get('pluginId', v => resolve({ replied: true, hasPluginId: !!(v && v.pluginId), error: chrome.runtime.lastError?.message || '' })); } catch (error) { resolve({ error: String(error) }); } }),
+                timeout(1500),
+              ]);
+              const whoami = await Promise.race([
+                new Promise(resolve => { try { chrome.runtime.sendMessage({ kind: 'whoami' }, v => resolve({ replied: true, hasTabId: Number.isInteger(v?.chromeTabId), error: chrome.runtime.lastError?.message || '' })); } catch (error) { resolve({ error: String(error) }); } }),
+                timeout(1500),
+              ]);
+              return { storage, whoami, websocketType: typeof WebSocket };
+            })()`,
+            awaitPromise: true,
+            returnByValue: true,
+          });
+          evidence.isolatedProbes.push({ contextId: world.contextId, result: result.result?.value || null,
+            exception: result.exceptionDetails?.text || null });
+        } catch (error) {
+          evidence.isolatedProbes.push({ contextId: world.contextId, error: String(error).slice(0, 300) });
+        }
+      }
     }
     evidence.contentStartup = await page.evaluate(() => ({
       tabIdCreated: !!sessionStorage.getItem('chatgpt-bridge-tab-id'),
@@ -115,6 +178,16 @@ test('T-047：獨立 Chromium 真實載入原始 MV3，content hello 與隔離 B
     evidence.chromeTabId = bridge.chromeTabId();
     evidence.tabUrl = bridge.tabUrl();
     assert.equal(evidence.documentIntercepted, evidence.navigationAttempts.length, '每次隔離導覽都必須命中合成文件，不可流向外網');
+    if (evidence.loopbackDenyRequested) {
+      assert.equal(evidence.loopbackPermission, 'denied', '隔離負向對照必須確實拒絕 loopback 權限');
+      assert.equal(evidence.connected, false, '拒絕 loopback 權限時不應完成握手');
+      assert.equal(evidence.cdpWebSockets.some((event) => event.phase === 'handshake-request'), false,
+        '被拒絕的連線不得發出 WebSocket 握手請求');
+      assert.ok(evidence.cdpWebSockets.some((event) => String(event.errorMessage).includes('ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS')),
+        '負向對照必須觀測到 Chromium 本機網路權限阻擋錯誤');
+      status = 'PASS';
+      return;
+    }
     assert.equal(evidence.connected, true, '真實 MV3 content 必須送出 hello');
     assert.equal(evidence.protocol, 62);
     assert.equal(evidence.tabUrl, 'https://chatgpt.com/?bridge_port=8799');
