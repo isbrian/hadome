@@ -1896,7 +1896,8 @@
       const 呼ばれてよい = (枠 >= 8765 && 枠 <= 8779 && !SKIP.includes(枠)) || 枠 === 8799;
       if (!呼ばれてよい) return;
       // 試験枠への移動は、このタブが明示的に試験枠を指定した場合だけ許す。
-      if (枠 === 8799 && pinnedPort() !== 8799) return;
+      // 試験枠と通常枠の間では、どちら向きの dial も許可しない。
+      if ((枠 === 8799) !== (pinnedPort() === 8799)) return;
       if (tryPort === 枠 && alive) return;
       console.log(`[bridge] 枠 ${枠} へ繋ぎ直します（エディターに呼ばれた）`);
       tryPort = 枠;

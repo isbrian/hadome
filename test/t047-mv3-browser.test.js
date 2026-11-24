@@ -3,9 +3,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const http = require('node:http');
+const { once } = require('node:events');
 const path = require('node:path');
 const { chromium } = require('playwright-core');
 const { createRun } = require('../tools/lib/e2e-run');
+const { auditNetLog } = require('../tools/lib/e2e-netlog-audit');
 
 const extensionDir = path.resolve(__dirname, '../chrome-extension');
 const { openBridge } = require('../src/bridge');
@@ -13,9 +16,17 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // 這是原始 MV3 的 Browser Gate；測試頁一律由 Playwright 提供合成 HTML，禁止真實 ChatGPT/API 網路。
 test('T-047：獨立 Chromium 真實載入原始 MV3，content hello 與隔離 Bridge welcome', { timeout: 45000 }, async (t) => {
+  // HTTP プロキシだけでは DNS/DoH を遮断できないことを確認済み。
+  // 外部のネットワーク隔離を別途検証した環境でのみ実行する。この環境変数自体は隔離の証明ではない。
+  assert.equal(process.env.T047_ISOLATED_NETWORK_CONFIRMED, '1', 'BLOCKED: independently verified network isolation is required before launching Chromium');
   const run = createRun({ caseId: 'T047-MV3-BRIDGE', metadata: { layer: 'B', testDocument: 'synthetic', expectedPort: 8799 } });
   let context = null;
   let bridge = null;
+  let guard = null;
+  const guardSockets = new Set();
+  const deniedDestinations = [];
+  const guardErrors = [];
+  const netLogPath = path.join(run.paths.artifacts, 'chromium-netlog.json');
   let status = 'FAIL_ENVIRONMENT';
   const evidence = { runId: run.runId, workerUrl: null, documentIntercepted: 0, blockedRequests: [],
     protocol: null, chromeTabId: null, tabUrl: null, connected: false, errors: [],
@@ -28,6 +39,36 @@ test('T-047：獨立 Chromium 真實載入原始 MV3，content hello 與隔離 B
     run.manifest.ports[0].state = 'listening';
     run.manifest.ports[0].pid = process.pid;
 
+    // 専用ブラウザーの通信を閉じ込める。プロキシは一切転送せず、8799 だけを直接接続の対象とする。
+    const rejectRequest = (request) => deniedDestinations.push({ method: request.method, destination: String(request.url || '').split('?')[0].slice(0, 200) });
+    guard = http.createServer((request, response) => {
+      rejectRequest(request);
+      response.writeHead(403, { Connection: 'close' });
+      response.end();
+    });
+    for (const event of ['connect', 'upgrade']) guard.on(event, (request, socket) => {
+      rejectRequest(request);
+      socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+    });
+    // 拒否した接続をブラウザーが切断する場合も、未捕捉例外にしない。
+    const recordGuardError = (source, error) => {
+      guardErrors.push({ source, code: error.code || 'UNKNOWN', message: String(error.message).slice(0, 200) });
+    };
+    guard.on('clientError', (error, socket) => {
+      recordGuardError('clientError', error);
+      socket.destroy();
+    });
+    guard.on('connection', (socket) => {
+      socket.on('error', (error) => {
+        recordGuardError('socket', error);
+        socket.destroy();
+      });
+      guardSockets.add(socket);
+      socket.on('close', () => guardSockets.delete(socket));
+    });
+    guard.listen(0, '127.0.0.1');
+    await once(guard, 'listening');
+    evidence.networkGuard = { port: guard.address().port, allowedDestination: '127.0.0.1:8799', deniedDestinations, guardErrors, netLogPath };
     context = await chromium.launchPersistentContext(run.paths.profile, {
       headless: false,
       executablePath: chromium.executablePath(),
@@ -35,6 +76,9 @@ test('T-047：獨立 Chromium 真實載入原始 MV3，content hello 與隔離 B
       args: [
         `--disable-extensions-except=${extensionDir}`,
         `--load-extension=${extensionDir}`,
+        `--proxy-server=http://127.0.0.1:${guard.address().port}`,
+        '--proxy-bypass-list=<-loopback>;127.0.0.1:8799',
+        `--log-net-log=${netLogPath}`,
         '--no-first-run', '--no-default-browser-check',
         '--disable-background-networking', '--disable-component-update',
         '--disable-sync', '--disable-default-apps',
@@ -82,6 +126,18 @@ test('T-047：獨立 Chromium 真實載入原始 MV3，content hello 與隔離 B
     await session.send('Runtime.enable');
     // T-047：只記錄隔離測試頁的 WebSocket 網路事件，不改動擴充功能的連線行為。
     evidence.cdpWebSockets = [];
+    evidence.handshakeFrames = [];
+    for (const [eventName, direction] of [['Network.webSocketFrameSent', 'sent'], ['Network.webSocketFrameReceived', 'received']]) {
+      session.on(eventName, (event) => {
+        try {
+          const message = JSON.parse(event.response.payloadData);
+          if (message.type === 'hello' || message.type === 'welcome') {
+            evidence.handshakeFrames.push({ direction, requestId: event.requestId, type: message.type,
+              protocol: message.protocol, pinnedPort: message.pinnedPort ?? null, chromeTabId: message.chromeTabId ?? null });
+          }
+        } catch {}
+      });
+    }
     const recordSocket = (phase, event) => evidence.cdpWebSockets.push({
       phase,
       requestId: event.requestId || null,
@@ -185,13 +241,32 @@ test('T-047：獨立 Chromium 真實載入原始 MV3，content hello 與隔離 B
         '被拒絕的連線不得發出 WebSocket 握手請求');
       assert.ok(evidence.cdpWebSockets.some((event) => String(event.errorMessage).includes('ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS')),
         '負向對照必須觀測到 Chromium 本機網路權限阻擋錯誤');
+      assert.deepEqual(evidence.handshakeFrames, [], '拒否時は hello/welcome を送受信してはならない');
+      assert.ok(evidence.wsAttempts.length > 0);
+      assert.ok(evidence.wsAttempts.every(url => url === 'ws://127.0.0.1:8799/'));
+      assert.deepEqual(evidence.pageErrors, []);
       status = 'PASS';
       return;
     }
+    assert.equal(evidence.loopbackPermission, 'granted');
     assert.equal(evidence.connected, true, '真實 MV3 content 必須送出 hello');
     assert.equal(evidence.protocol, 62);
     assert.equal(evidence.tabUrl, 'https://chatgpt.com/?bridge_port=8799');
     assert.ok(Number.isInteger(evidence.chromeTabId), '必須取得真正的 Chrome tab ID');
+    assert.equal(evidence.contentStartup.pinnedValue, '8799');
+    assert.equal(evidence.contentStartup.rememberedPort, '8799');
+    assert.ok(Array.isArray(evidence.workerTabProbe));
+    assert.equal(evidence.workerTabProbe.length, 1, '隔離 profile には専用タブだけが存在すること');
+    assert.equal(evidence.workerTabProbe[0].tabId, evidence.chromeTabId);
+    assert.equal(evidence.workerTabProbe[0].reportedPort, 8799);
+    assert.equal(evidence.workerTabProbe[0].listenerReady, true);
+    const hello = evidence.handshakeFrames.find(frame => frame.direction === 'sent' && frame.type === 'hello');
+    assert.ok(hello, '実際の WebSocket hello フレームが必要');
+    assert.equal(hello.pinnedPort, 8799);
+    assert.equal(hello.protocol, 62);
+    assert.equal(hello.chromeTabId, evidence.chromeTabId);
+    assert.ok(evidence.handshakeFrames.some(frame => frame.direction === 'received' && frame.type === 'welcome' && frame.protocol === 62 && frame.requestId === hello.requestId), '同一 WebSocket の welcome が必要');
+    assert.ok(evidence.cdpWebSockets.some(event => event.phase === 'handshake-response' && event.responseStatus === 101 && event.requestId === hello.requestId));
     assert.ok(evidence.executionContexts.some((item) => item.origin.startsWith('chrome-extension://') && !item.isDefault), '必須觀測真實 MV3 isolated world');
     assert.ok(evidence.wsAttempts.length > 0, '必須觀測真實內容腳本 WebSocket');
     assert.ok(evidence.wsAttempts.every((url) => url === 'ws://127.0.0.1:8799/'), '所有觀測到的分頁 WebSocket 必須只連 8799，禁止碰 8765');
@@ -208,7 +283,24 @@ test('T-047：獨立 Chromium 真實載入原始 MV3，content hello 與隔離 B
     if (bridge) {
       try { bridge.close(); } catch (e) { evidence.errors.push(`bridge close: ${String(e)}`); }
     }
-    evidence.closed = true;
+    if (guard) {
+      for (const socket of guardSockets) socket.destroy();
+      await new Promise(resolve => guard.close(resolve));
+    }
+    // 握手とネットワーク隔離は別々に判定する。
+    evidence.handshakeStatus = status;
+    let auditFailure = null;
+    try {
+      const netLog = JSON.parse(fs.readFileSync(netLogPath, 'utf8'));
+      evidence.networkAudit = auditNetLog(netLog, ['127.0.0.1:8799', `127.0.0.1:${evidence.networkGuard.port}`]);
+      if (!evidence.networkAudit.passed) auditFailure = new Error('BLOCKED: unexpected network destinations observed');
+    } catch (error) {
+      auditFailure = error;
+      evidence.networkAudit = { passed: false, error: String(error) };
+    }
+    if (auditFailure && status === 'PASS') status = 'FAIL_ENVIRONMENT';
+    evidence.closed = !evidence.errors.some(message => /^(browser|bridge) close:/.test(message));
+    if (!evidence.closed && status === 'PASS') status = 'FAIL_ENVIRONMENT';
     evidence.status = status;
     fs.writeFileSync(path.join(run.paths.artifacts, 'mv3-evidence.json'), JSON.stringify(evidence, null, 2) + '\n');
     run.manifest.metadata.actual = {
@@ -223,5 +315,9 @@ test('T-047：獨立 Chromium 真實載入原始 MV3，content hello 與隔離 B
     assert.equal(final.cleanup.state, 'complete', '必須清除獨立 profile/workspace/ports');
     console.log('T047_RUN_MANIFEST=' + path.join(run.root, 'owner-manifest.json'));
     console.log('T047_RUN_EVIDENCE=' + path.join(run.paths.artifacts, 'mv3-evidence.json'));
+    if (evidence.handshakeStatus === 'PASS') {
+      assert.equal(evidence.closed, true, 'browser/bridge cleanup must succeed');
+      if (auditFailure) throw auditFailure;
+    }
   }
 });

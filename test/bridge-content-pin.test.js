@@ -12,6 +12,7 @@ function createPinnedTab({ dropPluginIdResponse = false } = {}) {
   const sockets = [];
   const timers = new Map();
   const session = new Map();
+  const messageListeners = [];
   let timerId = 0;
 
   class Socket {
@@ -51,7 +52,7 @@ function createPinnedTab({ dropPluginIdResponse = false } = {}) {
       runtime: {
         lastError: null,
         sendMessage(_msg, cb) { cb({ chromeTabId: 47 }); },
-        onMessage: { addListener() {} },
+        onMessage: { addListener(listener) { messageListeners.push(listener); } },
       },
     },
     WebSocket: Socket,
@@ -70,7 +71,9 @@ function createPinnedTab({ dropPluginIdResponse = false } = {}) {
     timers.delete(id);
     timer.fn();
   }
-  return { sockets, runNextTimer };
+  return { sockets, runNextTimer, dial(port) {
+    for (const listener of messageListeners) listener({ kind: 'dial', port }, {}, () => {});
+  } };
 }
 
 test('T-047：extension storage 回呼未返回時仍須啟動釘選連線', async () => {
@@ -98,4 +101,15 @@ test('T-047：明確釘選 8799 的分頁連線失敗後不可退回正式 8765'
   }
   assert.ok(tab.sockets.length >= 6);
   assert.ok(tab.sockets.every((socket) => socket.url === 'ws://127.0.0.1:8799'));
+});
+
+test('T-047: 試験専用タブは通常枠からの dial を拒否する', async () => {
+  const tab = createPinnedTab();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(tab.sockets.length, 1);
+  for (const port of [8765, 8766, 8779]) tab.dial(port);
+  assert.equal(tab.sockets.length, 1, '通常枠への接続を開始してはならない');
+  assert.equal(tab.sockets[0].readyState, 0, '既存の接続試行を中断してはならない');
+  assert.ok(tab.sockets.every(socket => socket.url === 'ws://127.0.0.1:8799'));
 });

@@ -255,6 +255,46 @@ const ROSTER_SKIP = [8767, 8768, 8769];
 const ROSTER_EXTRA = [];
 const ROSTER_MS = 30000;
 
+// 試験専用タブは通常枠の探索・操作から除外する。
+// URL のピンが消えた場合も、content 側の保持している枠を確認する。
+function queryOrdinaryTabs(done) {
+  chrome.tabs.query({ url: 'https://chatgpt.com/*' }, (tabs) => {
+    const error = chrome.runtime.lastError;
+    if (error) return done([], error);
+    const candidates = (tabs || []).filter((tab) => {
+      try {
+        return Number.isInteger(tab.id) && new URL(tab.url || '').searchParams.get('bridge_port') !== '8799';
+      } catch { return false; }
+    });
+    if (!candidates.length) return done([], null);
+    const accepted = new Set();
+    let remaining = candidates.length;
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      done(candidates.filter((tab) => accepted.has(tab.id)), null);
+    };
+    const timer = setTimeout(finish, 1500);
+    for (const tab of candidates) {
+      let answered = false;
+      const reply = (result) => {
+        if (answered || finished) return;
+        answered = true;
+        if (Number.isInteger(result?.port) && result.port >= 0 && result.port !== 8799) accepted.add(tab.id);
+        if (--remaining === 0) finish();
+      };
+      try {
+        chrome.tabs.sendMessage(tab.id, { kind: 'which_port' }, (result) => {
+          const error = chrome.runtime.lastError;
+          reply(error ? null : result);
+        });
+      } catch { reply(null); }
+    }
+  });
+}
+
 function rosterPayload(done) {
   chrome.storage.local.get('pluginId', (v) => {
     const pluginId = (v && v.pluginId) || '';
@@ -262,8 +302,7 @@ function rosterPayload(done) {
     chrome.storage.session.get(null, (all) => {
       void chrome.runtime.lastError;
       const 専有 = all || {};
-      chrome.tabs.query({ url: 'https://chatgpt.com/*' }, (tabs) => {
-      void chrome.runtime.lastError;
+      queryOrdinaryTabs((tabs) => {
       const 窓 = new Map();
       for (const t of tabs || []) {
         const w = String(t.windowId);
@@ -367,7 +406,7 @@ function 名乗る(定時 = false) {
 
         if (m.type === 'closeTabsOnPort') {
           const 狙う港 = Number.isInteger(m.port) && m.port > 0 ? m.port : 0;
-          if (!狙う港) return;
+          if (!狙う港 || 狙う港 === 8799) return;
           clearTimeout(閉じる時計);
           閉じる時計 = setTimeout(閉じる, 10000);
           let 訊いた様子 = null;
@@ -380,8 +419,7 @@ function 名乗る(定時 = false) {
             clearTimeout(閉じる時計);
             閉じる時計 = setTimeout(閉じる, 300);
           };
-          chrome.tabs.query({ url: 'https://chatgpt.com/*' }, (tabs) => {
-            const 探し損ね = chrome.runtime.lastError;
+          queryOrdinaryTabs((tabs, 探し損ね) => {
             if (探し損ね) return void 返す2(0, `タブを探せなかった: ${探し損ね.message || '不明'}`);
             港のタブを探す(tabs || [], 狙う港, (当たり, 様子) => {
               訊いた様子 = 様子 || null;
@@ -395,8 +433,7 @@ function 名乗る(定時 = false) {
 
           clearTimeout(閉じる時計);
           閉じる時計 = setTimeout(閉じる, 10000);
-          chrome.tabs.query({ url: 'https://chatgpt.com/*' }, (tabs) => {
-            const 探し損ね = chrome.runtime.lastError;
+          queryOrdinaryTabs((tabs, 探し損ね) => {
             const 返す = (n, 失敗) => {
               try {
 
@@ -439,8 +476,7 @@ function 名乗る(定時 = false) {
         if (m.type !== 'wantTab') return;
         const 道 = String(m.url || '');
         if (!道) return;
-        chrome.tabs.query({ url: 'https://chatgpt.com/*' }, (tabs) => {
-          void chrome.runtime.lastError;
+        queryOrdinaryTabs((tabs) => {
 
           // 別の対話を部分一致で拾わない。番号を指定された場合は代替候補へ落とさない。
           let 目標;
