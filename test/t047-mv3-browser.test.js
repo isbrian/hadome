@@ -69,7 +69,10 @@ test('T-047：獨立 Chromium 真實載入原始 MV3，content hello 與隔離 B
     guard.listen(0, '127.0.0.1');
     await once(guard, 'listening');
     evidence.networkGuard = { port: guard.address().port, allowedDestination: '127.0.0.1:8799', deniedDestinations, guardErrors, netLogPath };
+    // Playwright は既定で Chromium sandbox を無効にするため、明示的に有効化する。
+    evidence.chromiumSandboxRequested = true;
     context = await chromium.launchPersistentContext(run.paths.profile, {
+      chromiumSandbox: true,
       headless: false,
       executablePath: chromium.executablePath(),
       timeout: 16000,
