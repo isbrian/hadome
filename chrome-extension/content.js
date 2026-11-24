@@ -136,26 +136,31 @@
     EDITOR_ID = 名札;
   }
   const pluginIdReady = new Promise((resolve) => {
-    try {
-      chrome.storage.local.get('pluginId', (v) => {
-        const 在る = v && typeof v.pluginId === 'string' && v.pluginId;
-        if (在る) {
-          PLUGIN_ID = v.pluginId;
-          resolve(PLUGIN_ID);
-          return;
-        }
-        const 作った = 'p-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
-        PLUGIN_ID = 作った;
+    let finished = false;
+    const makeId = () => 'p-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+    const finish = (id, persist = false) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(deadline);
+      PLUGIN_ID = id;
+      if (persist) {
         try {
-          chrome.storage.local.set({ pluginId: 作った });
+          chrome.storage.local.set({ pluginId: id });
         } catch {
 
         }
-        resolve(作った);
+      }
+      resolve(id);
+    };
+    const deadline = setTimeout(() => finish(makeId(), false), 1500);
+    try {
+      chrome.storage.local.get('pluginId', (v) => {
+        if (finished) return;
+        const existing = v && typeof v.pluginId === 'string' && v.pluginId;
+        finish(existing || makeId(), !existing);
       });
     } catch {
-      PLUGIN_ID = 'p-' + Math.random().toString(36).slice(2, 10);
-      resolve(PLUGIN_ID);
+      finish(makeId(), true);
     }
   });
 
@@ -193,6 +198,12 @@
   const chromeTabIdReady = new Promise((resolve) => askChromeTabId(0, resolve));
 
   const identityReady = Promise.all([pluginIdReady, chromeTabIdReady]);
+  // T-047: 隔離埠的被動診斷，不讀取或輸出實際識別值。
+  if (pinned === 8799) {
+    pluginIdReady.then(() => console.log('[t047] plugin identity ready'));
+    chromeTabIdReady.then(() => console.log('[t047] tab identity ready'));
+    identityReady.then(() => console.log('[t047] identity ready'));
+  }
   const RECONNECT_MS = 3000;
 
   const STEP_MS = 150;
@@ -236,13 +247,17 @@
 
   function connect() {
     const port = tryPort;
+    if (pinned === 8799) console.log('[t047] connect entered, port=' + port);
     try {
       sock = new WebSocket(`ws://127.0.0.1:${port}`);
-    } catch {
+    } catch (error) {
+      if (pinned === 8799) console.warn('[t047] WebSocket constructor error: ' + String(error).slice(0, 300));
       nextPort();
       setTimeout(connect, RECONNECT_MS);
       return;
     }
+
+    if (pinned === 8799) console.log('[t047] WebSocket constructed, state=' + sock.readyState);
 
     sock.onopen = () => {
       alive = true;
@@ -367,7 +382,7 @@
     };
 
     sock.onerror = () => {
-
+      if (pinned === 8799) console.warn('[t047] WebSocket error event, state=' + sock.readyState);
     };
 
     sock.onmessage = async (ev) => {
